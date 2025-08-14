@@ -1,8 +1,9 @@
-
+// app/layout.tsx
 import "../styles/globals.css";
 import { Brand } from "@/components/Brand";
 import { Nav } from "@/components/Nav";
 import { Disclaimer } from "@/components/Disclaimer";
+import Script from "next/script"; // ✅ AdSense 스크립트 로더
 
 export const metadata = {
   title: "Kyber’s Guide | Crypto Insight Dashboard",
@@ -13,6 +14,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ko">
       <body className="bg-brand-bg text-brand-ink">
+        {/* ✅ AdSense 전역 스크립트: 앱 전체에서 '한 번만' 로드 */}
+        <Script
+          id="adsbygoogle-init"
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4907767015127643" // ← 게시자 ID로 교체
+          crossOrigin="anonymous"
+          strategy="afterInteractive" // 페이지가 뜬 뒤 로드(성능 안전)
+        />
+
         <div className="min-h-screen flex flex-col">
           <header className="border-b border-brand-line/40 sticky top-0 backdrop-blur bg-brand-bg/75 z-50">
             <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-6">
@@ -20,8 +30,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Nav />
             </div>
           </header>
+
           <main className="flex-1">{children}</main>
+
           <Disclaimer />
+
           <footer className="border-t border-brand-line/40">
             <div className="mx-auto max-w-7xl px-4 py-6 text-xs text-brand-ink/70 flex flex-col sm:flex-row gap-2 sm:gap-6">
               <div>© {new Date().getFullYear()} Kyber’s Guide</div>
