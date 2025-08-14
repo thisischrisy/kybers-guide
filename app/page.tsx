@@ -55,6 +55,8 @@ export default async function Home() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
+      {/* ✅ 상단 광고 (인트로 블록 아래) */}
+      <AdSlot id="2752680401" className="my-4" />
       {/* 인트로 블록 */}
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/50 shadow-card p-6 mb-4">
         <h2 className="text-lg font-semibold mb-2">불안과 혼란을 줄이는, 한눈에 보는 대시보드</h2>
@@ -87,6 +89,8 @@ export default async function Home() {
         <p className="text-brand-ink/80">
           Kyber’s Guide — 신뢰 가능한 요약과 직관적 시각화로 핵심만 제공합니다.
         </p>
+        {/* ✅ 중간 광고 (KPI/요약 아래) */}
+        <AdSlot id="6614267314" className="my-6" />
 
         {/* KPI */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
@@ -122,6 +126,9 @@ export default async function Home() {
         <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">개요 프리뷰</div>
         <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">알트 프리뷰</div>
       </section>
+
+      {/* ✅ 하단 광고 (푸터 직전) */}
+      <AdSlot id="5301185643" className="my-8" />
     </div>
   );
 }

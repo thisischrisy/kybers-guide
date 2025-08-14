@@ -4,30 +4,28 @@
 import { useEffect } from "react";
 
 interface AdSlotProps {
-  id: string; // 광고 단위 ID
+  id: string;            // 광고 단위 ID (data-ad-slot)
+  className?: string;    // ✅ 선택: 스타일 커스터마이즈용
 }
 
-export function AdSlot({ id }: AdSlotProps) {
+export function AdSlot({ id, className }: AdSlotProps) {
   useEffect(() => {
     try {
-      // 광고 스크립트가 이미 있으면 재로드
-      if (window) {
-        // @ts-ignore
-        (window.adsbygoogle = window.adsbygoogle || []).push({});
-      }
+      // @ts-ignore
+      (window.adsbygoogle = window.adsbygoogle || []).push({});
     } catch (err) {
-      console.error("AdSense error:", err);
+      console.warn("AdSense load:", err);
     }
   }, []);
 
   return (
     <ins
-      className="adsbygoogle block text-center"
+      className={`adsbygoogle block ${className ?? ""}`}
       style={{ display: "block" }}
-      data-ad-client="ca-pub-4907767015127643" // ← 본인 AdSense 게시자 ID
-      data-ad-slot="6903531138" // ← 광고 단위 ID
+      data-ad-client="ca-pub-여기에_당신_게시자ID"  // ← 본인 게시자 ID로 교체되어 있어야 합니다
+      data-ad-slot={id}                              // ← 광고 단위 ID
       data-ad-format="auto"
       data-full-width-responsive="true"
-    ></ins>
+    />
   );
 }
