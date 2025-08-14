@@ -30,3 +30,31 @@ export function rsi(closes: number[], period = 14) {
   }
   return rsis;
 }
+
+export function macd(closes: number[], fast=12, slow=26, signal=9) {
+  const ema = (period: number) => {
+    const k = 2/(period+1);
+    const out: number[] = [];
+    let prev: number | null = null;
+    for (let i=0;i<closes.length;i++){
+      const price = closes[i];
+      prev = prev == null ? price : (price - prev)*k + prev;
+      out.push(prev);
+    }
+    return out;
+  };
+  const emaFast = ema(fast);
+  const emaSlow = ema(slow);
+  const macdLine = emaFast.map((v,i)=> v - emaSlow[i]);
+  // signal on macdLine
+  const k = 2/(signal+1);
+  const signalLine: number[] = [];
+  let prev: number | null = null;
+  for (let i=0;i<macdLine.length;i++){
+    const m = macdLine[i];
+    prev = prev == null ? m : (m - prev)*k + prev;
+    signalLine.push(prev);
+  }
+  const hist = macdLine.map((v,i)=> v - signalLine[i]);
+  return { macdLine, signalLine, hist };
+}
