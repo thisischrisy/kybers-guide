@@ -110,6 +110,14 @@ export default async function OverviewPage() {
             MVP에선 자리만. 다음 단계에서 간단한 Rainbow 밴드 + D-카운트다운을 붙입니다.
           </div>
         </div>
+         {/* 5) 반감기 추가 */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
+          <div className="text-sm mb-2 text-brand-ink/80">BTC 반감기 카운트다운</div>
+          <HalvingCountdown />
+          <div className="mt-2 text-xs text-brand-ink/60">
+            ※ 블록 시간 변동으로 실제 일자는 달라질 수 있습니다.
+          </div>
+        </div>
       </div>
     </div>
   );
