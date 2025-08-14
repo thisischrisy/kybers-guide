@@ -1,5 +1,6 @@
 import { Donut } from "@/components/Donut";
 import { MiniLine } from "@/components/MiniLine";
+import { HalvingCountdown } from "@/components/HalvingCountdown";
 
 export const revalidate = 3600; // 1시간 캐시
 
