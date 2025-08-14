@@ -17,10 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* ✅ AdSense 전역 스크립트: 앱 전체에서 '한 번만' 로드 */}
         <Script
           id="adsbygoogle-init"
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4907767015127643" // ← 게시자 ID로 교체
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4907767015127643"
           crossOrigin="anonymous"
-          strategy="afterInteractive" // 페이지가 뜬 뒤 로드(성능 안전)
+          strategy="afterInteractive"
         />
 
         <div className="min-h-screen flex flex-col">
