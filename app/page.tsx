@@ -2,6 +2,8 @@ import Link from "next/link";
 import { KpiCard } from "@/components/KpiCard";
 import { AdSlot } from "@/components/AdSlot";
 import { sma, rsi } from "@/lib/indicators";
+import { Badge } from "@/components/Badge";   // ✅ 추가
+import { Info } from "@/components/Info";     // ✅ 추가
 
 export const revalidate = 3600; // 이 페이지 데이터는 1시간 캐시
 
@@ -53,6 +55,24 @@ export default async function Home() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
+      {/* 인트로 블록 */}
+      <section className="rounded-2xl border border-brand-line/30 bg-brand-card/50 shadow-card p-6 mb-4">
+        <h2 className="text-lg font-semibold mb-2">불안과 혼란을 줄이는, 한눈에 보는 대시보드</h2>
+        <p className="text-sm text-brand-ink/80 leading-6">
+          암호화폐 시장, 너무 복잡하게 느껴지셨나요? <br />
+          비트코인 가격, MACD, 도미넌스, 온체인 지표까지 — 흩어진 핵심 정보를 한눈에 정리해드립니다. <br />
+          AI 분석으로 지금이 강세/약세인지 자동 판단하고, 초보자도 쉽게 시장 흐름을 읽을 수 있습니다.
+        </p>
+        <div className="mt-3 text-xs text-brand-ink/70">
+          <div className="flex items-center gap-2">
+            <span className="opacity-80">색상 가이드:</span>
+            <Badge tone="buy">🟢 매수</Badge>
+            <Badge tone="sell">🔴 매도</Badge>
+            <Badge tone="neutral">⚪ 중립</Badge>
+          </div>
+        </div>
+      </section>
+
       {/* AI 한 줄 요약 카드 */}
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/50 shadow-card p-6 mb-4">
         <div className="text-sm mb-2 text-brand-ink/80">AI 한 줄 요약(보수적 룰 기반)</div>
@@ -67,11 +87,27 @@ export default async function Home() {
         <p className="text-brand-ink/80">
           Kyber’s Guide — 신뢰 가능한 요약과 직관적 시각화로 핵심만 제공합니다.
         </p>
+
+        {/* KPI */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
           <KpiCard title="총 시가총액" value={mcap ? `$${(mcap / 1e12).toFixed(2)}T` : "-"} />
           <KpiCard title="BTC 도미넌스" value={dom ? `${dom.toFixed(1)}%` : "-"} />
           <KpiCard title="공포·탐욕 지수" value={fgi ?? "-"} />
         </div>
+
+        {/* KPI 바로 아래 색상 가이드 + 툴팁 */}
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <Badge tone="buy">🟢 매수</Badge>
+            <Badge tone="sell">🔴 매도</Badge>
+            <Badge tone="neutral">⚪ 중립</Badge>
+          </div>
+          <div className="text-brand-ink/70">
+            <Info label="RSI" tip="RSI 70 이상 과열, 30 이하 과매도" /> ·{" "}
+            <Info label="도미넌스" tip="BTC 비중 상승 시 알트 약세 가능성" />
+          </div>
+        </div>
+
         <div className="flex gap-3 mt-6 text-sm">
           <Link href="/overview" className="underline">시장 개요</Link>
           <Link href="/btc" className="underline">비트코인 단기 분석</Link>
