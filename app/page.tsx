@@ -4,6 +4,7 @@ import { AdSlot } from "@/components/AdSlot";
 import { sma, rsi } from "@/lib/indicators";
 import { Badge } from "@/components/Badge";   // ✅ 추가
 import { Info } from "@/components/Info";     // ✅ 추가
+import { SIGNAL_EMOJI } from "@/lib/signal";
 
 export const revalidate = 3600; // 이 페이지 데이터는 1시간 캐시
 
@@ -68,9 +69,9 @@ export default async function Home() {
         <div className="mt-3 text-xs text-brand-ink/70">
           <div className="flex items-center gap-2">
             <span className="opacity-80">색상 가이드:</span>
-            <Badge tone="buy">🟢 매수</Badge>
-            <Badge tone="sell">🔴 매도</Badge>
-            <Badge tone="neutral">⚪ 중립</Badge>
+              <Badge tone="buy">{SIGNAL_EMOJI.buy} 매수</Badge>
+              <Badge tone="sell">{SIGNAL_EMOJI.sell} 매도</Badge>
+              <Badge tone="neutral">{SIGNAL_EMOJI.neutral} 중립</Badge>
           </div>
         </div>
       </section>
@@ -102,9 +103,9 @@ export default async function Home() {
         {/* KPI 바로 아래 색상 가이드 + 툴팁 */}
         <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
           <div className="flex items-center gap-2">
-            <Badge tone="buy">🟢 매수</Badge>
-            <Badge tone="sell">🔴 매도</Badge>
-            <Badge tone="neutral">⚪ 중립</Badge>
+            <Badge tone="buy">{SIGNAL_EMOJI.buy} 매수</Badge>
+            <Badge tone="sell">{SIGNAL_EMOJI.sell} 매도</Badge>
+            <Badge tone="neutral">{SIGNAL_EMOJI.neutral} 중립</Badge>
           </div>
           <div className="text-brand-ink/70">
             <Info label="RSI" tip="RSI 70 이상 과열, 30 이하 과매도" /> ·{" "}

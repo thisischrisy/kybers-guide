@@ -54,7 +54,11 @@ export default async function BTCPage() {
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className="flex items-center gap-2 text-sm mb-2">
           <Badge tone={tone}>
-            {tone === "buy" ? "🟢 상승세" : tone === "sell" ? "🔴 하락세" : "⚪ 중립"}
+            {tone === "buy"
+              ? `${SIGNAL_EMOJI.buy} 상승세`
+              : tone === "sell"
+              ? `${SIGNAL_EMOJI.sell} 하락세`
+              : `${SIGNAL_EMOJI.neutral} 중립`}
           </Badge>
           <span className="text-brand-ink/70">{summary()}</span>
         </div>
