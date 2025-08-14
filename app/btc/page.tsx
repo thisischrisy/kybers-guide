@@ -1,6 +1,7 @@
 import { Badge } from "@/components/Badge";
 import { Info } from "@/components/Info";
 import { rsi, macd, sma } from "@/lib/indicators";
+import { SIGNAL_EMOJI } from "@/lib/signal";
 
 export const revalidate = 1800; // 30분 캐시
 
