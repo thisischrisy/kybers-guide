@@ -1,5 +1,7 @@
 // app/overview/page.tsx
 import dynamic from "next/dynamic";
+import { quantiles } from "@/lib/stats";
+import { useEffect, useState } from "react";
 
 export const revalidate = 3600; // 1시간 캐시
 
@@ -41,6 +43,18 @@ async function getFGI() {
   }
 }
 
+async function getBTCPrices() {
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1460&interval=daily"
+    );
+    if (!res.ok) return null;
+    return res.json(); // { prices: [[ts, price], ...] }
+  } catch {
+    return null;
+  }
+}
+
 function formatUSD(n: number | null | undefined) {
   if (typeof n !== "number" || !isFinite(n)) return "-";
   if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
@@ -49,8 +63,21 @@ function formatUSD(n: number | null | undefined) {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
+function bandLabel(bands: number[], price: number) {
+  if (!bands.length || !Number.isFinite(price)) return "-";
+  let idx = 0;
+  while (idx < bands.length && price > bands[idx]) idx++;
+  const names = ["저평가", "저-중", "중립-", "중립", "중립+", "고-중", "고평가-", "고평가", "극고평가"];
+  return names[Math.min(Math.max(idx - 1, 0), names.length - 1)];
+}
+
 export default async function OverviewPage() {
-  const [global, stableAll, fgi] = await Promise.all([getGlobal(), getStable(), getFGI()]);
+  const [global, stableAll, fgi, btc] = await Promise.all([
+    getGlobal(),
+    getStable(),
+    getFGI(),
+    getBTCPrices()
+  ]);
 
   // 1) 전체 시총 & 도미넌스
   const mcap = global?.data?.total_market_cap?.usd ?? null;
@@ -76,6 +103,23 @@ export default async function OverviewPage() {
     fearValue < 55 ? "중립" :
     fearValue < 75 ? "탐욕" : "극심한 탐욕";
 
+  // RainbowLite 컴포넌트를 클라이언트 전용으로 불러오기
+  const RainbowLite = dynamic(
+    () => import("@rainbow-me/rainbowkit").then(mod => mod.RainbowLite), 
+    { ssr: false }
+  );
+
+  const closes: number[] = Array.isArray(btc?.prices) ? btc.prices.map((p: any[]) => p[1]) : [];
+  const labels: string[] = Array.isArray(btc?.prices)
+    ? btc.prices.map((p: any[]) => new Date(p[0]).toLocaleDateString())
+    : [];
+  const lastPrice = closes.at(-1) ?? NaN;
+
+  // 분위 경계 (0%, 12.5%, 25%, 37.5%, 50%, 62.5%, 75%, 87.5%, 100%)
+  const qs = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1];
+  const bands = closes.length ? quantiles(closes, qs) : [];
+
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-6">
       <h2 className="text-xl font-semibold">시장 개요</h2>
@@ -86,6 +130,24 @@ export default async function OverviewPage() {
         <HalvingCountdown />
         <div className="mt-2 text-xs text-brand-ink/60">※ 블록 시간 변동으로 실제 일자는 달라질 수 있습니다.</div>
       </div>
+
+      {/* Rainbow(간이) */}
+    <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
+      <div className="text-sm mb-2 text-brand-ink/80">BTC Rainbow (간이 · 최근 4년 분위)</div>
+      {closes.length ? (
+        <>
+          <RainbowLite labels={labels} closes={closes} bands={bands} lastPrice={lastPrice} />
+          <div className="mt-2 text-xs text-brand-ink/60">
+            ※ 최근 4년 종가 분포 분위 기반의 간단 밴드입니다(정밀 지표 아님). 현재가: ${Math.round(lastPrice).toLocaleString()}
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-brand-ink/60">데이터 수집 중…</div>
+      )}
+      <div className="mt-2 text-xs">
+        현재 평가 구간: <strong>{bandLabel(bands, lastPrice)}</strong>
+      </div>
+    </div>
 
       {/* 전체 시총 & 도미넌스 */}
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
