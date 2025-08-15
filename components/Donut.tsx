@@ -1,35 +1,64 @@
+// components/Donut.tsx
 "use client";
-import { useEffect, useRef } from "react";
-import { Chart, ArcElement, Tooltip } from "chart.js";
-Chart.register(ArcElement, Tooltip);
 
-export function Donut({ labels, values }: { labels: string[]; values: number[] }) {
-  const ref = useRef<HTMLCanvasElement | null>(null);
+import { useEffect, useRef } from "react";
+import {
+  Chart,
+  ArcElement,
+  Tooltip,
+  Legend,
+  ChartOptions,
+  ChartData,
+} from "chart.js";
+
+// ✅ 차트 타입/요소 등록 (중요)
+Chart.register(ArcElement, Tooltip, Legend);
+
+export function Donut({
+  labels,
+  values,
+}: {
+  labels: string[];
+  values: number[];
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
-    const ctx = ref.current.getContext("2d");
+    if (!canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
     if (!ctx) return;
 
-    const chart = new Chart(ctx, {
-      type: "doughnut",
-      data: {
-        labels,
-        datasets: [
-          {
-            data: values,
-            // 색상은 지정하지 말기(디폴트 사용) — 필요시 추후 테마화
-          }
-        ]
+    const data: ChartData<"doughnut", number[], string> = {
+      labels,
+      datasets: [
+        {
+          data: values,
+          // 색상은 지정하지 않으면 Chart.js 기본 팔레트 사용
+          borderWidth: 0,
+        },
+      ],
+    };
+
+    const options: ChartOptions<"doughnut"> = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: { enabled: true },
       },
-      options: {
-        cutout: "60%",
-        plugins: { tooltip: { enabled: true }, legend: { display: false } }
-      }
-    });
+      cutout: "60%",
+    };
+
+    const chart = new Chart(ctx, { type: "doughnut", data, options });
 
     return () => chart.destroy();
-  }, [labels, values]);
+    // labels/values 변경 시만 재생성
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(labels), JSON.stringify(values)]);
 
-  return <canvas ref={ref} style={{ width: "100%", height: 220 }} />;
+  return (
+    <div style={{ height: 220 }}>
+      <canvas ref={canvasRef} />
+    </div>
+  );
 }
