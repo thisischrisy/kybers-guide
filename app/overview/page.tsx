@@ -13,6 +13,11 @@ const HalvingCountdown = dynamic(
   { ssr: false }
 );
 
+const RainbowLite = dynamic(
+  () => import("@/components/RainbowLite").then(m => m.RainbowLite),
+  { ssr: false }
+);
+
 async function getGlobal() {
   try {
     const res = await fetch("https://api.coingecko.com/api/v3/global");
@@ -102,12 +107,6 @@ export default async function OverviewPage() {
     fearValue < 45 ? "공포" :
     fearValue < 55 ? "중립" :
     fearValue < 75 ? "탐욕" : "극심한 탐욕";
-
-  // RainbowLite 컴포넌트를 클라이언트 전용으로 불러오기
-  const RainbowLite = dynamic(
-    () => import("@rainbow-me/rainbowkit").then(mod => mod.RainbowLite), 
-    { ssr: false }
-  );
 
   const closes: number[] = Array.isArray(btc?.prices) ? btc.prices.map((p: any[]) => p[1]) : [];
   const labels: string[] = Array.isArray(btc?.prices)
