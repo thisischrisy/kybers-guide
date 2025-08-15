@@ -1,4 +1,3 @@
-// components/MiniLine.tsx
 "use client";
 
 import { useEffect, useRef } from "react";
@@ -11,11 +10,12 @@ import {
   Tooltip,
   Filler,
   Legend,
+  LineController,      // ✅ 컨트롤러 추가
   ChartOptions,
   ChartData,
 } from "chart.js";
 
-// ✅ 라인 차트에 필요한 것들 등록
+// ✅ 라인 컨트롤러까지 등록
 Chart.register(
   LineElement,
   PointElement,
@@ -23,7 +23,8 @@ Chart.register(
   CategoryScale,
   Tooltip,
   Filler,
-  Legend
+  Legend,
+  LineController
 );
 
 export function MiniLine({

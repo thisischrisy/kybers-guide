@@ -1,4 +1,3 @@
-// components/Donut.tsx
 "use client";
 
 import { useEffect, useRef } from "react";
@@ -7,12 +6,13 @@ import {
   ArcElement,
   Tooltip,
   Legend,
+  DoughnutController,   // ✅ 컨트롤러 추가
   ChartOptions,
   ChartData,
 } from "chart.js";
 
-// ✅ 차트 타입/요소 등록 (중요)
-Chart.register(ArcElement, Tooltip, Legend);
+// ✅ 반드시 컨트롤러까지 등록해야 함
+Chart.register(ArcElement, Tooltip, Legend, DoughnutController);
 
 export function Donut({
   labels,
@@ -33,7 +33,6 @@ export function Donut({
       datasets: [
         {
           data: values,
-          // 색상은 지정하지 않으면 Chart.js 기본 팔레트 사용
           borderWidth: 0,
         },
       ],
@@ -52,7 +51,6 @@ export function Donut({
     const chart = new Chart(ctx, { type: "doughnut", data, options });
 
     return () => chart.destroy();
-    // labels/values 변경 시만 재생성
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(labels), JSON.stringify(values)]);
 
