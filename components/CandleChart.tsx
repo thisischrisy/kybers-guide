@@ -1,10 +1,10 @@
+// components/CandleChart.tsx
 "use client";
 
 import { useEffect, useRef } from "react";
 import {
   createChart,
   ColorType,
-  type IChartApi,
   type ISeriesApi,
   type CandlestickData,
   type LineData,
@@ -22,8 +22,6 @@ function sma(values: number[], period: number): (number | null)[] {
   }
   return out;
 }
-
-type OHLC = { time: UTCTimestamp; open: number; high: number; low: number; close: number };
 
 type Props = {
   symbol?: "bitcoin" | "ethereum";
@@ -43,7 +41,11 @@ export function CandleChart({
   useEffect(() => {
     if (!ref.current) return;
 
+    // ✅ 컨테이너 폭 확보(0px일 때 addSeries가 assertion 터질 수 있음)
+    const ensureWidth = () => Math.max(ref.current?.clientWidth || 0, 320);
+
     const chart = createChart(ref.current, {
+      width: ensureWidth(),
       height,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
@@ -55,50 +57,48 @@ export function CandleChart({
       },
       rightPriceScale: { borderColor: "rgba(255,255,255,0.15)" },
       timeScale: { borderColor: "rgba(255,255,255,0.15)" },
-      crosshair: { mode: 1 },
+      // ⚠️ v5에서 crosshair 모드 값이 바뀌면서 assertion을 유발할 수 있으니 제거
+      // crosshair: { mode: 1 },
     });
 
-    // v4/v5 호환: 캔들 시리즈 만들기
+    // v4/v5 호환: 시리즈 생성 (옵션은 나중에 applyOptions로)
+    // @ts-ignore 런타임 체크
+    const hasAddCandle = typeof (chart as any).addCandlestickSeries === "function";
+    // @ts-ignore 런타임 체크
+    const hasAddLine = typeof (chart as any).addLineSeries === "function";
+
     let candle: ISeriesApi<"Candlestick">;
-    // @ts-ignore - 런타임에서 존재 여부 체크
-    if (typeof (chart as any).addCandlestickSeries === "function") {
-      // v4 방식
+    if (hasAddCandle) {
+      // v4
       // @ts-ignore
-      candle = (chart as any).addCandlestickSeries({
-        upColor: "#16a34a",
-        downColor: "#ef4444",
-        borderUpColor: "#16a34a",
-        borderDownColor: "#ef4444",
-        wickUpColor: "#16a34a",
-        wickDownColor: "#ef4444",
-      });
+      candle = (chart as any).addCandlestickSeries();
     } else {
-      // v5 방식
+      // v5
       // @ts-ignore
-      candle = (chart as any).addSeries({
-        type: "Candlestick",
-        upColor: "#16a34a",
-        downColor: "#ef4444",
-        borderUpColor: "#16a34a",
-        borderDownColor: "#ef4444",
-        wickUpColor: "#16a34a",
-        wickDownColor: "#ef4444",
-      });
+      candle = (chart as any).addSeries({ type: "Candlestick" });
     }
 
-    // v4/v5 호환: 라인 시리즈(SMA들)
+    // 색상은 시리즈 생성 후 안전하게 적용
+    candle.applyOptions({
+      upColor: "#16a34a",
+      downColor: "#ef4444",
+      borderUpColor: "#16a34a",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#16a34a",
+      wickDownColor: "#ef4444",
+    });
+
     const maLines: ISeriesApi<"Line">[] = [];
     showSMA.forEach(() => {
+      // v4/v5 분기
       // @ts-ignore
-      const line =
-        // @ts-ignore
-        typeof (chart as any).addLineSeries === "function"
-          ? // v4
-            // @ts-ignore
-            (chart as any).addLineSeries({ lineWidth: 2 })
-          : // v5
-            // @ts-ignore
-            (chart as any).addSeries({ type: "Line", lineWidth: 2 });
+      const line = hasAddLine
+        ? // v4
+          // @ts-ignore
+          (chart as any).addLineSeries({ lineWidth: 2 })
+        : // v5
+          // @ts-ignore
+          (chart as any).addSeries({ type: "Line", lineWidth: 2 });
       maLines.push(line);
     });
 
@@ -112,8 +112,8 @@ export function CandleChart({
         if (!res.ok) throw new Error("fetch failed");
         const raw: [number, number, number, number, number][] = await res.json();
 
-        const data: OHLC[] = raw.map(([ts, o, h, l, c]) => ({
-          time: Math.floor(ts / 1000) as UTCTimestamp, // ✅ UTCTimestamp 요구
+        const data = raw.map(([ts, o, h, l, c]) => ({
+          time: Math.floor(ts / 1000) as UTCTimestamp, // ✅ v5는 UTCTimestamp 요구
           open: o,
           high: h,
           low: l,
@@ -122,29 +122,27 @@ export function CandleChart({
 
         if (stop) return;
 
-        // 캔들 데이터 타입 명시
         candle.setData(data as unknown as CandlestickData<UTCTimestamp>[]);
 
-        // SMA 계산(종가 기준)
+        // SMA(종가 기준)
         const closes = data.map((d) => d.close);
         const times = data.map((d) => d.time);
         showSMA.forEach((p, idx) => {
-          const series = maLines[idx];
           const s = sma(closes, p)
             .map((v, i) => (v == null ? null : { time: times[i], value: v }))
             .filter(Boolean) as { time: UTCTimestamp; value: number }[];
-
-          // 타입이 까다로워서 명시적으로 단언
-          series.setData(s as unknown as LineData<UTCTimestamp>[]);
+          maLines[idx].setData(s as unknown as LineData<UTCTimestamp>[]);
         });
       } catch (e) {
         console.warn("CandleChart error", e);
       }
     })();
 
-    const onResize = () =>
-      chart.applyOptions({ width: ref.current?.clientWidth || 600 });
-    onResize();
+    const onResize = () => {
+      chart.applyOptions({ width: ensureWidth() });
+    };
+    // 최초 렌더 직후 한 번 더 보장
+    requestAnimationFrame(onResize);
     window.addEventListener("resize", onResize);
 
     return () => {
