@@ -95,10 +95,18 @@ export function CandleChart({
       });
 
       try {
-        const url = `https://api.coingecko.com/api/v3/coins/${symbol}/ohlc?vs_currency=usd&days=${days}`;
+        // 기존
+        // const url = `https://api.coingecko.com/api/v3/coins/${symbol}/ohlc?vs_currency=usd&days=${days}`;
+        // const res = await fetch(url);
+        // if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+        // const raw: [number, number, number, number, number][] = await res.json();
+
+        // 교체:
+        const url = `/api/ohlc?symbol=${symbol}&days=${days}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-        const raw: [number, number, number, number, number][] = await res.json();
+        const payload: { data?: [number, number, number, number, number][] } = await res.json();
+        const raw = payload.data ?? [];
 
         if (stop) return;
 
@@ -128,6 +136,15 @@ export function CandleChart({
         }));
 
         candle.setData(data as unknown as CandlestickData<UTCTimestamp>[]);
+        const badge = document.createElement("div");
+            badge.style.position = "absolute";
+            badge.style.right = "8px";
+            badge.style.bottom = "8px";
+            badge.style.fontSize = "11px";
+            badge.style.opacity = "0.6";
+            badge.textContent = `${raw.length} bars`;
+            ref.current?.appendChild(badge);
+
         chart.timeScale().fitContent(); // ✅ 뷰포트 보정
 
         // SMA
