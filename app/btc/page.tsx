@@ -105,7 +105,7 @@ export default async function BTCPage() {
       {/* ✅ 캔들 + SMA(20/50) 차트 */}
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4">
         <div className="text-sm mb-3 text-brand-ink/80">BTC/USD — 캔들 + SMA(20/50)</div>
-        <CandleChart symbol="bitcoin" days={180} showSMA={[20, 50]} height={420} />
+        <CandleChart symbol="bitcoin" days={90} showSMA={[20, 50]} height={420} />
         <div className="mt-2 text-xs text-brand-ink/60">데이터: CoinGecko OHLC (일봉)</div>
       </div>
 
