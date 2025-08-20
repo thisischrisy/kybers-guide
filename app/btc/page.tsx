@@ -107,7 +107,7 @@ export default async function BTCPage() {
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4">
         <div className="text-sm mb-3 text-brand-ink/80">BTC/USDT — TradingView 차트</div>
         <TvChart symbol="bitcoin" interval="240" height={420} />
-        <div className="mt-2 text-xs text-brand-ink/60">데이터: TradingView(Binance)</div>
+        <div className="mt-2 text-xs text-brand-ink/60">데이터: TradingView (Binance)</div>
       </div>
 
       {/* 광고 (원하면 활성화) */}
