@@ -8,6 +8,7 @@ export const revalidate = 3600; // 1시간 캐시
 // ✅ 차트/카운트다운 같은 클라이언트 컴포넌트를 안전하게 동적 로딩
 const Donut = dynamic(() => import("@/components/Donut").then(m => m.Donut), { ssr: false });
 const MiniLine = dynamic(() => import("@/components/MiniLine").then(m => m.MiniLine), { ssr: false });
+const TvMini = dynamic(() => import("@/components/TvMini").then(m => m.TvMini), { ssr: false });
 const HalvingCountdown = dynamic(
   () => import("@/components/HalvingCountdown").then(m => m.HalvingCountdown),
   { ssr: false }
@@ -168,6 +169,11 @@ export default async function OverviewPage() {
           </div>
         </div>
       </div>
+
+      <section className="grid md:grid-cols-2 gap-6 mt-6">
+        <TvMini tvSymbol="BINANCE:BTCUSDT" title="BTC 미니 차트 (1D)" dateRange="1D" height={180} />
+        <TvMini tvSymbol="BINANCE:ETHUSDT" title="ETH 미니 차트 (1D)" dateRange="1D" height={180} />
+      </section>
 
       {/* 스테이블코인 총량 (MVP: 스냅샷) */}
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">

@@ -1,6 +1,7 @@
 // app/btc/page.tsx
 import dynamic from "next/dynamic";
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
+const BtcChartPanel = dynamic(() => import("@/components/BtcChartPanel").then(m => m.BtcChartPanel), { ssr: false });
 import { Badge } from "@/components/Badge";
 import { Info } from "@/components/Info";
 import { rsi, macd, sma } from "@/lib/indicators";
@@ -103,12 +104,10 @@ export default async function BTCPage() {
         </div>
       </div>
 
-      {/* ✅ TradingView 차트 (항상 보임) */}
-      <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4">
-        <div className="text-sm mb-3 text-brand-ink/80">BTC/USDT — TradingView 차트</div>
-        <TvChart symbol="bitcoin" interval="240" height={420} />
-        <div className="mt-2 text-xs text-brand-ink/60">데이터: TradingView (Binance)</div>
-      </div>
+      {/* ✅ 기간 토글 포함 BTC 차트 패널 */}
+      <BtcChartPanel />
+
+
 
       {/* 광고 (원하면 활성화) */}
       <div className="mt-6">
