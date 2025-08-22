@@ -1,7 +1,7 @@
 import dynamic from "next/dynamic";
 
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
-
+const CoinChartBlock = dynamic(() => import("@/components/CoinChartBlock").then(m => m.CoinChartBlock), { ssr: false });
 export const revalidate = 600; // 10분
 
 async function getCoin(id: string) {
@@ -57,7 +57,8 @@ export default async function CoinDetail({
         </div>
 
         {/* TradingView 차트 (현재 BTC/ETH만 지원 중) */}
-        <TvChart symbol="bitcoin" interval="240" height={460} />
+        // 기존: <TvChart symbol="bitcoin" interval="240" height={460} />
+        <CoinChartBlock sym={sym} height={460} />
       </div>
 
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4 text-sm text-brand-ink/70">

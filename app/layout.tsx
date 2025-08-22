@@ -27,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-6">
               <Brand />
               <Nav />
+              <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
             </div>
           </header>
 
