@@ -19,6 +19,7 @@ const RainbowLite = dynamic(
   { ssr: false }
 );
 
+
 async function getGlobal() {
   try {
     const res = await fetch("https://api.coingecko.com/api/v3/global");
@@ -99,6 +100,8 @@ export default async function OverviewPage() {
 
   const stableLabels = ["Now"];
   const stableValues = [typeof totalStable === "number" ? totalStable : 0];
+  const StablecapCard = dynamic(() => import("@/components/StablecapCard").then(m => m.StablecapCard), { ssr: false });
+
 
   // 3) FGI
   const fearValue = Number(fgi?.data?.[0]?.value ?? NaN);
@@ -182,6 +185,7 @@ export default async function OverviewPage() {
         <div className="mt-4">
           <MiniLine labels={stableLabels} values={stableValues} />
         </div>
+        <StablecapCard />
         <div className="mt-2 text-xs text-brand-ink/60">※ 추후 30/90일 타임라인으로 확장 예정</div>
       </div>
 
