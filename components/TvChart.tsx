@@ -3,7 +3,10 @@
 import { useEffect, useId, useRef } from "react";
 
 type Props = {
+  /** 기존 호환용: "bitcoin" | "ethereum" */
   symbol?: "bitcoin" | "ethereum";
+  /** 새로 추가: TradingView 심볼 문자열, 예) "BINANCE:SOLUSDT" */
+  tvSymbol?: string;
   interval?: "15" | "30" | "60" | "120" | "240" | "D";
   height?: number;
 };
@@ -17,12 +20,20 @@ declare global {
 
 export function TvChart({
   symbol = "bitcoin",
+  tvSymbol,
   interval = "240",
   height = 420,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   // 고유 id 생성 (문자열)
   const containerId = useId().replace(/[:]/g, "-");
+
+  // 기본 매핑: tvSymbol이 안 들어오면 fallback
+  const map: Record<string, string> = {
+    bitcoin: "BINANCE:BTCUSDT",
+    ethereum: "BINANCE:ETHUSDT",
+  };
+  const finalSymbol = tvSymbol || map[symbol] || "BINANCE:BTCUSDT";
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -38,12 +49,10 @@ export function TvChart({
     // TradingView 위젯 생성 함수
     const createWidget = () => {
       if (!window.TradingView) return; // 아직 로드 전
-      const tvSymbol = symbol === "bitcoin" ? "BINANCE:BTCUSDT" : "BINANCE:ETHUSDT";
       try {
-        // container_id는 문자열 id 여야 합니다!
         new window.TradingView.widget({
           autosize: true,
-          symbol: tvSymbol,
+          symbol: finalSymbol, // ✅ 여기서 최종 심볼 사용
           interval,
           timezone: "Etc/UTC",
           theme: "dark",
@@ -92,7 +101,7 @@ export function TvChart({
         if (hostRef.current) hostRef.current.innerHTML = "";
       } catch {}
     };
-  }, [symbol, interval, containerId]);
+  }, [finalSymbol, interval, containerId]);
 
   return (
     <div

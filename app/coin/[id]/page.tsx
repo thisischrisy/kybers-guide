@@ -31,6 +31,9 @@ export default async function CoinDetail({
   const ch24 = coin?.market_data?.price_change_percentage_24h ?? null;
   const mcap = coin?.market_data?.market_cap?.usd ?? null;
 
+  const tvSymbol = `BINANCE:${sym}USDT`;
+    <TvChart tvSymbol={tvSymbol} interval="240" height={460} />
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
