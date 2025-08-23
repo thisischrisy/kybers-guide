@@ -2,6 +2,7 @@
 import dynamic from "next/dynamic";
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 const BtcChartPanel = dynamic(() => import("@/components/BtcChartPanel").then(m => m.BtcChartPanel), { ssr: false });
+const BtcOscillators = dynamic(() => import("@/components/BtcOscillators").then(m => m.BtcOscillators), { ssr: false });
 import { Badge } from "@/components/Badge";
 import { Info } from "@/components/Info";
 import { rsi, macd, sma } from "@/lib/indicators";
@@ -107,7 +108,9 @@ export default async function BTCPage() {
       {/* ✅ 기간 토글 포함 BTC 차트 패널 */}
       <BtcChartPanel />
 
-
+      <div className="mt-4">
+        <BtcOscillators />
+      </div>
 
       {/* 광고 (원하면 활성화) */}
       <div className="mt-6">
