@@ -20,7 +20,6 @@ export default function AltcoinPage() {
       </div>
 
       {/* ✅ Top Movers (24h) */}
-      <AltTopMovers />
       <TopMovers />
       
 
