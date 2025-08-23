@@ -6,6 +6,8 @@ const AltTopMovers = dynamic(
   { ssr: false }
 );
 
+const TopMovers = dynamic(() => import("@/components/TopMovers").then(m => m.TopMovers), { ssr: false });
+
 export const revalidate = 600; // 10분
 
 export default function AltcoinPage() {
@@ -19,13 +21,15 @@ export default function AltcoinPage() {
 
       {/* ✅ Top Movers (24h) */}
       <AltTopMovers />
+      <TopMovers />
+      
 
       {/* 광고 */}
       <AdSlot id="altcoin-mid" />
 
       {/* 추후: 섹터 분류/신호 (개발 중 안내) */}
-      <div className="rounded-xl border border-brand-line/20 bg-brand-card/40 p-6 text-sm text-brand-ink/70">
-        섹터별 Top 3, RSI/MA 신호, Altcoin Season 지수는 업데이트 예정입니다.
+      <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
+        섹터별 Top 3 리스트 및 24h/7d/30d — (추가 예정)
       </div>
     </div>
   );
