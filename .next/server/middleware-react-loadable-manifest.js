@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{}"
+self.__REACT_LOADABLE_MANIFEST="{\"components/BtcChartPanel.tsx -> @/components/TvChart\":{\"id\":\"components/BtcChartPanel.tsx -> @/components/TvChart\",\"files\":[]}}"

@@ -552,6 +552,9 @@ video {
 .z-50 {
   z-index: 50;
 }
+.col-span-full {
+  grid-column: 1 / -1;
+}
 .mx-1 {
   margin-left: 0.25rem;
   margin-right: 0.25rem;
@@ -572,6 +575,9 @@ video {
   margin-top: 2rem;
   margin-bottom: 2rem;
 }
+.-mt-2 {
+  margin-top: -0.5rem;
+}
 .mb-1 {
   margin-bottom: 0.25rem;
 }
@@ -586,6 +592,12 @@ video {
 }
 .ml-2 {
   margin-left: 0.5rem;
+}
+.ml-4 {
+  margin-left: 1rem;
+}
+.mr-1 {
+  margin-right: 0.25rem;
 }
 .mt-1 {
   margin-top: 0.25rem;
@@ -602,12 +614,6 @@ video {
 .mt-6 {
   margin-top: 1.5rem;
 }
-.ml-4 {
-  margin-left: 1rem;
-}
-.mr-1 {
-  margin-right: 0.25rem;
-}
 .block {
   display: block;
 }
@@ -623,6 +629,9 @@ video {
 .h-4 {
   height: 1rem;
 }
+.h-6 {
+  height: 1.5rem;
+}
 .h-7 {
   height: 1.75rem;
 }
@@ -631,6 +640,9 @@ video {
 }
 .w-4 {
   width: 1rem;
+}
+.w-6 {
+  width: 1.5rem;
 }
 .w-auto {
   width: auto;
@@ -695,6 +707,11 @@ video {
 .gap-6 {
   gap: 1.5rem;
 }
+.space-y-3 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.75rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.75rem * var(--tw-space-y-reverse));
+}
 .space-y-4 > :not([hidden]) ~ :not([hidden]) {
   --tw-space-y-reverse: 0;
   margin-top: calc(1rem * calc(1 - var(--tw-space-y-reverse)));
@@ -710,11 +727,6 @@ video {
   margin-top: calc(2rem * calc(1 - var(--tw-space-y-reverse)));
   margin-bottom: calc(2rem * var(--tw-space-y-reverse));
 }
-.space-y-3 > :not([hidden]) ~ :not([hidden]) {
-  --tw-space-y-reverse: 0;
-  margin-top: calc(0.75rem * calc(1 - var(--tw-space-y-reverse)));
-  margin-bottom: calc(0.75rem * var(--tw-space-y-reverse));
-}
 .divide-y > :not([hidden]) ~ :not([hidden]) {
   --tw-divide-y-reverse: 0;
   border-top-width: calc(1px * calc(1 - var(--tw-divide-y-reverse)));
@@ -723,10 +735,16 @@ video {
 .divide-brand-line\/20 > :not([hidden]) ~ :not([hidden]) {
   border-color: rgb(19 68 68 / 0.2);
 }
+.overflow-x-auto {
+  overflow-x: auto;
+}
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.rounded {
+  border-radius: 0.25rem;
 }
 .rounded-2xl {
   border-radius: 1rem;
@@ -755,9 +773,6 @@ video {
 .border-amber-400\/30 {
   border-color: rgb(251 191 36 / 0.3);
 }
-.border-brand-line\/20 {
-  border-color: rgb(19 68 68 / 0.2);
-}
 .border-brand-line\/30 {
   border-color: rgb(19 68 68 / 0.3);
 }
@@ -767,8 +782,18 @@ video {
 .border-emerald-400\/30 {
   border-color: rgb(52 211 153 / 0.3);
 }
+.border-emerald-500\/40 {
+  border-color: rgb(16 185 129 / 0.4);
+}
 .border-rose-400\/30 {
   border-color: rgb(251 113 133 / 0.3);
+}
+.border-rose-500\/40 {
+  border-color: rgb(244 63 94 / 0.4);
+}
+.border-brand-gold {
+  --tw-border-opacity: 1;
+  border-color: rgb(207 174 91 / var(--tw-border-opacity));
 }
 .bg-amber-500\/20 {
   background-color: rgb(245 158 11 / 0.2);
@@ -780,20 +805,34 @@ video {
 .bg-brand-bg\/75 {
   background-color: rgb(3 31 31 / 0.75);
 }
-.bg-brand-card\/40 {
-  background-color: rgb(11 43 43 / 0.4);
-}
 .bg-brand-card\/50 {
   background-color: rgb(11 43 43 / 0.5);
 }
 .bg-brand-card\/60 {
   background-color: rgb(11 43 43 / 0.6);
 }
+.bg-emerald-500\/10 {
+  background-color: rgb(16 185 129 / 0.1);
+}
 .bg-emerald-500\/20 {
   background-color: rgb(16 185 129 / 0.2);
 }
+.bg-rose-500\/10 {
+  background-color: rgb(244 63 94 / 0.1);
+}
 .bg-rose-500\/20 {
   background-color: rgb(244 63 94 / 0.2);
+}
+.bg-brand-card {
+  --tw-bg-opacity: 1;
+  background-color: rgb(11 43 43 / var(--tw-bg-opacity));
+}
+.bg-brand-gold {
+  --tw-bg-opacity: 1;
+  background-color: rgb(207 174 91 / var(--tw-bg-opacity));
+}
+.p-3 {
+  padding: 0.75rem;
 }
 .p-4 {
   padding: 1rem;
@@ -950,6 +989,10 @@ video {
   --tw-text-opacity: 1;
   color: rgb(251 113 133 / var(--tw-text-opacity));
 }
+.text-black {
+  --tw-text-opacity: 1;
+  color: rgb(0 0 0 / var(--tw-text-opacity));
+}
 .underline {
   text-decoration-line: underline;
 }
@@ -985,13 +1028,23 @@ html,body{height:100%}
   --tw-border-opacity: 1;
   border-color: rgb(19 68 68 / var(--tw-border-opacity));
 }
+.hover\:border-brand-line\/60:hover {
+  border-color: rgb(19 68 68 / 0.6);
+}
 .hover\:bg-brand-card\/60:hover {
   background-color: rgb(11 43 43 / 0.6);
 }
 .hover\:bg-white\/5:hover {
   background-color: rgb(255 255 255 / 0.05);
 }
+.hover\:bg-brand-card\/80:hover {
+  background-color: rgb(11 43 43 / 0.8);
+}
 @media (min-width: 640px) {
+
+  .sm\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
   .sm\:grid-cols-3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1009,6 +1062,16 @@ html,body{height:100%}
 
   .md\:grid-cols-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .md\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+
+  .lg\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
