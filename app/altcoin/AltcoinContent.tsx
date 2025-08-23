@@ -1,35 +1,48 @@
 "use client";
 
 import { useState } from "react";
-import dynamic from "next/dynamic";
+import { TopMovers } from "@/components/TopMovers";
 
-const TopMovers = dynamic(() => import("@/components/TopMovers").then(m => m.TopMovers), { ssr: false });
+const FILTERS = [
+  "All",
+  "LargeCap",
+  "Layer1",
+  "Layer2",
+  "DeFi",
+  "Meme",
+  "AI",
+  "RWA",
+  "Metaverse",
+  "GameFi",
+  "Oracles",
+  "PrivacyZK",
+  "LiquidStaking",
+  "Stablecoin",
+  "Exchange",
+];
 
-const FILTERS = ["All", "LargeCap", "Meme", "AI", "DeFi"];
-
-export default function AltcoinContent() {
-  const [filter, setFilter] = useState("All");
+export function AltcoinContent() {
+  const [filter, setFilter] = useState<string>("All");
 
   return (
-    <div>
-      {/* 필터 버튼 그룹 */}
-      <div className="flex gap-2 mb-4">
-        {FILTERS.map(f => (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {FILTERS.map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-3 py-1 rounded-full text-sm border transition ${
-              filter === f
-                ? "bg-brand-gold text-black border-brand-gold"
-                : "bg-brand-card text-brand-ink/70 border-brand-line/30 hover:bg-brand-card/80"
-            }`}
+            className={`px-3 py-1 rounded-full border text-sm transition
+              ${filter === f
+                ? "border-brand-gold/60 text-brand-gold"
+                : "border-brand-line/30 text-brand-ink/80 hover:border-brand-line/60"}
+            `}
           >
             {f}
           </button>
         ))}
       </div>
 
-      {/* Top Movers */}
+      {/* ✅ 선택된 필터 넘기기 */}
       <TopMovers filter={filter} />
     </div>
   );
