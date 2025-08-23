@@ -1,3 +1,4 @@
+// app/altcoin/AltcoinContent.tsx
 "use client";
 
 import { useState } from "react";
@@ -21,7 +22,7 @@ const FILTERS = [
   "Exchange",
 ];
 
-export function AltcoinContent() {
+export default function AltcoinContent() {
   const [filter, setFilter] = useState<string>("All");
 
   return (
@@ -42,7 +43,6 @@ export function AltcoinContent() {
         ))}
       </div>
 
-      {/* ✅ 선택된 필터 넘기기 */}
       <TopMovers filter={filter} />
     </div>
   );
