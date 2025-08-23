@@ -1,34 +1,18 @@
-// app/altcoin/AltcoinContent.tsx
 "use client";
 
 import { useState } from "react";
 import { TopMovers } from "@/components/TopMovers";
-
-const FILTERS = [
-  "All",
-  "LargeCap",
-  "Layer1",
-  "Layer2",
-  "DeFi",
-  "Meme",
-  "AI",
-  "RWA",
-  "Metaverse",
-  "GameFi",
-  "Oracles",
-  "PrivacyZK",
-  "LiquidStaking",
-  "Stablecoin",
-  "Exchange",
-];
+import { SectorInsight } from "@/components/SectorInsight";
+import { SECTORS, SectorKey } from "@/lib/sectors";
 
 export default function AltcoinContent() {
-  const [filter, setFilter] = useState<string>("All");
+  const [filter, setFilter] = useState<SectorKey>("All");
 
   return (
     <div className="space-y-4">
+      {/* 필터 버튼들 */}
       <div className="flex flex-wrap gap-2">
-        {FILTERS.map((f) => (
+        {SECTORS.map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -43,6 +27,10 @@ export default function AltcoinContent() {
         ))}
       </div>
 
+      {/* 섹터 인사이트(상·하락 요약) */}
+      <SectorInsight filter={filter} />
+
+      {/* Top Movers 카드들 */}
       <TopMovers filter={filter} />
     </div>
   );
