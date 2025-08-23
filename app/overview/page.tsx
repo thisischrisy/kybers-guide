@@ -9,6 +9,7 @@ export const revalidate = 3600; // 1시간 캐시
 const Donut = dynamic(() => import("@/components/Donut").then(m => m.Donut), { ssr: false });
 const MiniLine = dynamic(() => import("@/components/MiniLine").then(m => m.MiniLine), { ssr: false });
 const TvMini = dynamic(() => import("@/components/TvMini").then(m => m.TvMini), { ssr: false });
+const StablecapCard = dynamic(() => import("@/components/StablecapCard").then(m => m.StablecapCard), { ssr: false });
 const HalvingCountdown = dynamic(
   () => import("@/components/HalvingCountdown").then(m => m.HalvingCountdown),
   { ssr: false }
