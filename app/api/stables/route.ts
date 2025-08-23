@@ -1,51 +1,26 @@
+// app/api/btc/market-chart/route.ts
 import { NextResponse } from "next/server";
 
-export const revalidate = 600; // 10분 캐시
-
-async function fetchChart(id: string, days = 90) {
-  const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}&interval=daily`;
-  const r = await fetch(url, { cache: "no-store", headers: { accept: "application/json" } });
-  if (!r.ok) throw new Error(`fetch_failed_${id}`);
-  return r.json();
-}
-
-async function fetchSpot(id: string) {
-  const url = `https://api.coingecko.com/api/v3/coins/${id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
-  const r = await fetch(url, { next: { revalidate: 600 }, headers: { accept: "application/json" } });
-  if (!r.ok) throw new Error(`spot_failed_${id}`);
-  return r.json();
-}
-
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const days = searchParams.get("days") || "120";
+
   try {
-    const { searchParams } = new URL(req.url);
-    const days = Number(searchParams.get("days") || 90);
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`,
+      { next: { revalidate: 300 } } // 5분 캐싱
+    );
 
-    const [usdtChart, usdcChart, usdtSpot, usdcSpot] = await Promise.all([
-      fetchChart("tether", days),
-      fetchChart("usd-coin", days),
-      fetchSpot("tether"),
-      fetchSpot("usd-coin"),
-    ]);
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: "Failed to fetch from CoinGecko" },
+        { status: res.status }
+      );
+    }
 
-    const capsUSDT: number[] = (usdtChart?.market_caps || []).map((p: any[]) => p[1] || 0);
-    const capsUSDC: number[] = (usdcChart?.market_caps || []).map((p: any[]) => p[1] || 0);
-    const len = Math.min(capsUSDT.length, capsUSDC.length);
-    const sumCaps = Array.from({ length: len }, (_, i) => (capsUSDT[i] || 0) + (capsUSDC[i] || 0));
-
-    const nowUSDT = usdtSpot?.market_data?.market_cap?.usd ?? null;
-    const nowUSDC = usdcSpot?.market_data?.market_cap?.usd ?? null;
-    const nowSum = (typeof nowUSDT === "number" ? nowUSDT : 0) + (typeof nowUSDC === "number" ? nowUSDC : 0);
-
-    return NextResponse.json({
-      data: {
-        days,
-        sumCaps,
-        now: nowSum || null,
-        parts: { usdt: nowUSDT ?? null, usdc: nowUSDC ?? null },
-      },
-    });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "stables_failed" }, { status: 500 });
+    const data = await res.json();
+    return NextResponse.json(data);
+  } catch (e) {
+    return NextResponse.json({ error: "Unexpected error", detail: String(e) }, { status: 500 });
   }
 }
