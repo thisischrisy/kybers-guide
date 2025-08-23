@@ -1,99 +1,124 @@
+// app/coin/[id]/page.tsx
 import dynamic from "next/dynamic";
+import Link from "next/link";
+import { AdSlot } from "@/components/AdSlot";
 
-const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
-const CoinChartBlock = dynamic(() => import("@/components/CoinChartBlock").then(m => m.CoinChartBlock), { ssr: false });
-export const revalidate = 600; // 10분
+export const revalidate = 300; // 5분 캐시
 
+// TV 미니차트(임베드) - 클라이언트에서만
+const TvMini = dynamic(() => import("@/components/TvMini").then(m => m.TvMini), { ssr: false });
 
-async function getCoin(id: string) {
-  const url =
-    `https://api.coingecko.com/api/v3/coins/${id}` +
-    `?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
-  const res = await fetch(url, { next: { revalidate: 600 } });
-  if (!res.ok) throw new Error("coin_fetch_failed");
-  return res.json();
+type Coin = {
+  id: string;
+  symbol: string;
+  name: string;
+  market_cap_rank?: number;
+  current_price?: number;
+  price_change_percentage_24h?: number;
+  market_cap?: number;
+  total_volume?: number;
+};
+
+function formatUSD(n?: number) {
+  if (typeof n !== "number" || !isFinite(n)) return "-";
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6)  return `$${(n / 1e6).toFixed(2)}M`;
+  return `$${Math.round(n).toLocaleString()}`;
 }
 
-export default async function CoinDetail({
-  params,
-  searchParams,
-}: {
-  params: { id: string };
-  searchParams: { sym?: string };
-}) {
-  const coin = await getCoin(params.id);
-  const sym =
-    (searchParams?.sym as string | undefined)?.toUpperCase() ||
-    (coin?.symbol ? String(coin.symbol).toUpperCase() : "BTC");
+// 간단 TV 심볼 추정
+function guessTvSymbol(id: string, symbol: string) {
+  const map: Record<string, string> = {
+    bitcoin: "BINANCE:BTCUSDT",
+    ethereum: "BINANCE:ETHUSDT",
+    solana: "BINANCE:SOLUSDT",
+    binancecoin: "BINANCE:BNBUSDT",
+    ripple: "BINANCE:XRPUSDT",
+    cardano: "BINANCE:ADAUSDT",
+    dogecoin: "BINANCE:DOGEUSDT",
+    chainlink: "BINANCE:LINKUSDT",
+    avalanche: "BINANCE:AVAXUSDT",
+    toncoin: "BINANCE:TONUSDT",
+    tron: "BINANCE:TRXUSDT",
+    polkadot: "BINANCE:DOTUSDT",
+    litecoin: "BINANCE:LTCUSDT",
+  };
+  if (map[id]) return map[id];
+  return `BINANCE:${symbol?.toUpperCase()}USDT`;
+}
 
-  const name = coin?.name ?? params.id;
-  const rank = coin?.market_cap_rank ?? null;
-  const price = coin?.market_data?.current_price?.usd ?? null;
-  const ch24 = coin?.market_data?.price_change_percentage_24h ?? null;
-  const mcap = coin?.market_data?.market_cap?.usd ?? null;
-  const ch7d  = coin?.market_data?.price_change_percentage_7d ?? null;
-  const ch30d = coin?.market_data?.price_change_percentage_30d ?? null;
+async function getCoin(id: string): Promise<Coin | null> {
+  try {
+    const url =
+      `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd` +
+      `&ids=${encodeURIComponent(id)}` +
+      `&sparkline=false&price_change_percentage=24h,7d,30d`;
+    const res = await fetch(url, { next: { revalidate: 300 } });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    return Array.isArray(arr) && arr[0] ? arr[0] as Coin : null;
+  } catch {
+    return null;
+  }
+}
 
-  function pctBadge(label: string, v: number | null | undefined) {
-    if (typeof v !== "number") return <span className="px-2 py-1 rounded bg-brand-card/60 border border-brand-line/40 text-xs">-</span>;
-      return (
-          <span className={`px-2 py-1 rounded text-xs border ${
-            v >= 0 ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-300" : "bg-rose-500/10 border-rose-500/40 text-rose-300"
-          }`}>
-          {label}: {v >= 0 ? "▲" : "▼"} {Math.abs(v).toFixed(2)}%
-          </span>
-      );
+export default async function CoinDetailPage({ params }: { params: { id: string } }) {
+  const id = params.id;
+  const coin = await getCoin(id);
+
+  if (!coin) {
+    return (
+      <div className="mx-auto max-w-5xl px-4 py-10">
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
+          데이터를 불러오지 못했습니다. <Link href="/altcoin" className="underline">← 목록으로</Link>
+        </div>
+      </div>
+    );
   }
 
-  const tvSymbol = `BINANCE:${sym}USDT`;
-    <TvChart tvSymbol={tvSymbol} interval="240" height={460} />
+  const tvSymbol = guessTvSymbol(coin.id, coin.symbol);
+  const chg = coin.price_change_percentage_24h ?? 0;
+  const chgColor = chg > 0 ? "text-green-400" : chg < 0 ? "text-red-400" : "text-brand-ink/70";
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-6">
+      {/* 헤더 */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">
-          {name} <span className="text-brand-ink/60 text-sm">({sym})</span>
-        </h2>
-        {rank ? <div className="text-xs text-brand-ink/60">Market Cap Rank #{rank}</div> : null}
+        <h1 className="text-xl font-semibold">
+          {coin.name} ({coin.symbol?.toUpperCase()})
+          {coin.market_cap_rank ? (
+            <span className="ml-2 text-xs text-brand-ink/60">Rank #{coin.market_cap_rank}</span>
+          ) : null}
+        </h1>
+        <Link href="/altcoin" className="text-sm underline">← 알트코인으로</Link>
       </div>
 
-      <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4">
-        <div className="text-sm text-brand-ink/80 mb-2">
-          가격: {price != null ? `$${price.toLocaleString()}` : "-"}
-          {ch24 != null ? (
-            <span className={`ml-2 ${ch24 >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-              {ch24 >= 0 ? "▲" : "▼"} {Math.abs(ch24).toFixed(2)}%
-            </span>
-          ) : null}
-          {mcap != null ? (
-            <span className="ml-2 text-brand-ink/70">시총: ${Math.round(mcap).toLocaleString()}</span>
-          ) : null}
+      {/* KPI */}
+      <div className="grid sm:grid-cols-3 gap-4">
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-xs text-brand-ink/70 mb-1">가격</div>
+          <div className="text-lg font-semibold">{formatUSD(coin.current_price)}</div>
         </div>
-
-        {/* TradingView 차트 (현재 BTC/ETH만 지원 중) */}
-        // 기존: <TvChart symbol="bitcoin" interval="240" height={460} />
-        <CoinChartBlock sym={sym} height={460} />
-      </div>
-
-      {/* KPI 배지 묶음 */}
-      <div className="flex flex-wrap gap-2 text-sm">
-        <span className="px-2 py-1 rounded bg-brand-card/60 border border-brand-line/40">
-          시총랭크: {rank ?? "-"}
-        </span>
-        <span className="px-2 py-1 rounded bg-brand-card/60 border border-brand-line/40">
-          현재가: {price != null ? `$${price.toLocaleString()}` : "-"}
-        </span>
-        {pctBadge("24h", ch24)}
-        {pctBadge("7d", ch7d)}
-        {pctBadge("30d", ch30d)}
-      </div>
-
-      <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4 text-sm text-brand-ink/70">
-        <div className="font-medium mb-1">설명</div>
-        <div className="prose prose-invert max-w-none text-[13px] leading-6">
-          이 페이지는 {name} 기본 정보를 보여주는 MVP 버전입니다.
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-xs text-brand-ink/70 mb-1">24h 변화</div>
+          <div className={`text-lg font-semibold ${chgColor}`}>
+            {typeof chg === "number" ? `${chg.toFixed(2)}%` : "-"}
+          </div>
+        </div>
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-xs text-brand-ink/70 mb-1">시가총액</div>
+          <div className="text-lg font-semibold">{formatUSD(coin.market_cap)}</div>
         </div>
       </div>
+
+      {/* 차트 (TradingView 위젯) */}
+      <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-2">
+        <TvMini tvSymbol={tvSymbol} title={`${coin.symbol?.toUpperCase()} / USDT`} dateRange="1D" height={460} />
+      </div>
+
+      {/* 광고 */}
+      <AdSlot id="coin-mid" />
     </div>
   );
 }
