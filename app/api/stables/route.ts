@@ -6,21 +6,24 @@ async function fetchChart(id: string, days = 90) {
   const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}&interval=daily`;
   const r = await fetch(url, { cache: "no-store", headers: { accept: "application/json" } });
   if (!r.ok) throw new Error(`fetch_failed_${id}`);
-  return r.json(); // { prices:[], market_caps:[[ts, val]...], total_volumes:[] }
+  return r.json();
 }
 
 async function fetchSpot(id: string) {
   const url = `https://api.coingecko.com/api/v3/coins/${id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
   const r = await fetch(url, { next: { revalidate: 600 }, headers: { accept: "application/json" } });
   if (!r.ok) throw new Error(`spot_failed_${id}`);
-  return r.json(); // market_data.market_cap.usd
+  return r.json();
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url);
+    const days = Number(searchParams.get("days") || 90);
+
     const [usdtChart, usdcChart, usdtSpot, usdcSpot] = await Promise.all([
-      fetchChart("tether", 90),
-      fetchChart("usd-coin", 90),
+      fetchChart("tether", days),
+      fetchChart("usd-coin", days),
       fetchSpot("tether"),
       fetchSpot("usd-coin"),
     ]);
@@ -36,12 +39,10 @@ export async function GET() {
 
     return NextResponse.json({
       data: {
-        sumCaps,                     // 90일 합산 시총 스파크라인용
-        now: nowSum || null,         // 현재 합계(달러)
-        parts: {
-          usdt: nowUSDT ?? null,
-          usdc: nowUSDC ?? null,
-        },
+        days,
+        sumCaps,
+        now: nowSum || null,
+        parts: { usdt: nowUSDT ?? null, usdc: nowUSDC ?? null },
       },
     });
   } catch (e: any) {
