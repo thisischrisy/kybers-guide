@@ -4,6 +4,7 @@ const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart
 const CoinChartBlock = dynamic(() => import("@/components/CoinChartBlock").then(m => m.CoinChartBlock), { ssr: false });
 export const revalidate = 600; // 10분
 
+
 async function getCoin(id: string) {
   const url =
     `https://api.coingecko.com/api/v3/coins/${id}` +
@@ -30,6 +31,19 @@ export default async function CoinDetail({
   const price = coin?.market_data?.current_price?.usd ?? null;
   const ch24 = coin?.market_data?.price_change_percentage_24h ?? null;
   const mcap = coin?.market_data?.market_cap?.usd ?? null;
+  const ch7d  = coin?.market_data?.price_change_percentage_7d ?? null;
+  const ch30d = coin?.market_data?.price_change_percentage_30d ?? null;
+
+  function pctBadge(label: string, v: number | null | undefined) {
+    if (typeof v !== "number") return <span className="px-2 py-1 rounded bg-brand-card/60 border border-brand-line/40 text-xs">-</span>;
+      return (
+          <span className={`px-2 py-1 rounded text-xs border ${
+            v >= 0 ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-300" : "bg-rose-500/10 border-rose-500/40 text-rose-300"
+          }`}>
+          {label}: {v >= 0 ? "▲" : "▼"} {Math.abs(v).toFixed(2)}%
+          </span>
+      );
+  }
 
   const tvSymbol = `BINANCE:${sym}USDT`;
     <TvChart tvSymbol={tvSymbol} interval="240" height={460} />
@@ -59,6 +73,19 @@ export default async function CoinDetail({
         {/* TradingView 차트 (현재 BTC/ETH만 지원 중) */}
         // 기존: <TvChart symbol="bitcoin" interval="240" height={460} />
         <CoinChartBlock sym={sym} height={460} />
+      </div>
+
+      {/* KPI 배지 묶음 */}
+      <div className="flex flex-wrap gap-2 text-sm">
+        <span className="px-2 py-1 rounded bg-brand-card/60 border border-brand-line/40">
+          시총랭크: {rank ?? "-"}
+        </span>
+        <span className="px-2 py-1 rounded bg-brand-card/60 border border-brand-line/40">
+          현재가: {price != null ? `$${price.toLocaleString()}` : "-"}
+        </span>
+        {pctBadge("24h", ch24)}
+        {pctBadge("7d", ch7d)}
+        {pctBadge("30d", ch30d)}
       </div>
 
       <div className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4 text-sm text-brand-ink/70">
