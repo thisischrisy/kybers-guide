@@ -128,14 +128,14 @@ export default async function Home() {
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
       {/* a) Kyber's Guide 배너 */}
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/60 shadow-card p-6 md:p-8">
-        <div className="text-xs tracking-widest text-brand-ink/70 mb-2">KYBER’S GUIDE</div>
+        <div className="text-xs uppercase tracking-widest text-brand-gold/90 mb-2">Kyber’s Guide</div>
         <h1 className="text-2xl md:text-3xl font-semibold leading-snug">
           흩어진 시장 신호를 정리합니다.
         </h1>
         <p className="mt-3 text-sm md:text-base text-brand-ink/80 leading-6">
-          AI 분석으로 지금이 강세인지 약세인지 자동 판단하고, 초보자도 쉽게 시장 흐름을 읽을 수 있습니다.
-          핵심만 간결하게 — <span className="font-semibold">매수</span> · <span className="font-semibold">중립</span> ·{" "}
-          <span className="font-semibold">매도</span> 신호로 제공합니다.
+          AI 분석으로 지금이 강세인지 약세인지 자동 판단하고, 초보자도 쉽게 시장 흐름을 읽을 수 있습니다.<br />
+          핵심만 간결하게 — <span className="font-semibold text-brand-gold">매수</span> · <span className="font-semibold text-brand-gold">중립</span> ·{" "}
+          <span className="font-semibold text-brand-gold">매도</span> 신호로 제공합니다.
         </p>
         <div className="mt-4 flex items-center gap-2 text-xs">
           <span className="opacity-80">색상 가이드:</span>
@@ -161,6 +161,9 @@ export default async function Home() {
             알트코인 더 보기
           </Link>
         </div>
+        <p className="text-xs text-brand-ink/70 mt-1">
+          AI 알고리즘을 통해 단·중·장기 모두 “상승 우세”에 가까운 종목을 선별합니다.
+        </p>
 
         {strongBuys.length ? (
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
