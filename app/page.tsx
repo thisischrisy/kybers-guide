@@ -136,7 +136,8 @@ export default async function Home() {
         <div className="text-xs uppercase tracking-widest text-brand-gold/90 mb-2">Kyber’s Guide</div>
         <h1 className="text-2xl md:text-3xl font-semibold leading-snug">흩어진 시장 신호를 정리합니다.</h1>
         <p className="mt-3 text-sm md:text-base text-brand-ink/80 leading-6">
-          AI 분석으로 지금이 강세인지 약세인지 자동 판단하고, 초보자도 쉽게 시장 흐름을 읽을 수 있습니다.
+          차트를 몰라도 지금이 투자할 때인지 쉽게 알 수 있습니다 <br />
+          AI 분석으로 지금이 강세인지 약세인지 자동 판단하여, 초보~중급 투자자에게 명확한 방향을 제시합니다.
           <br />
           핵심만 간결하게 — <span className="font-semibold text-brand-gold">매수</span> ·{" "}
           <span className="font-semibold text-brand-gold">중립</span> ·{" "}
@@ -285,11 +286,11 @@ export default async function Home() {
           />
         </div>
 
-        {/* M2 도미넌스 / 투자심리 간단 요약 */}
+        {/* 코인 도미넌스 / 투자심리 간단 요약 */}
         <div className="grid md:grid-cols-2 gap-6 mt-6">
-          {/* M2 도미넌스 */}
+          {/* 코인 도미넌스 */}
           <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
-            <div className="text-sm text-brand-ink/80 mb-2">M2 도미넌스 (BTC/ETH/ALT)</div>
+            <div className="text-sm text-brand-ink/80 mb-2">코인 도미넌스 (BTC/ETH/ALT)</div>
             <div className="text-sm">
               <div className="mb-1">
                 BTC: {typeof domBTC === "number" ? domBTC.toFixed(1) : "—"}%
