@@ -111,11 +111,26 @@ export default async function Home() {
   // “오늘의 강력 매수 추천” (MVP: 24h +2% 이상 & 시총순 정렬 → 상위 6개)
   let strongBuys: any[] = [];
   if (Array.isArray(markets)) {
-    strongBuys = markets
-      .filter((c: any) => (c.price_change_percentage_24h ?? 0) >= 2)
-      .sort((a: any, b: any) => (a.market_cap_rank ?? 9999) - (b.market_cap_rank ?? 9999))
-      .slice(0, 6);
-  }
+  strongBuys = markets
+    .map((c: any) => {
+      const change24h =
+        c.price_change_percentage_24h ??
+        c.price_change_percentage_24h_in_currency ??
+        c.price_change_24h ??
+        0;
+      return { ...c, __change24h: change24h };
+    })
+    // 임시로 +1%로 완화 (필요하면 다시 +2%로 올리면 됩니다)
+    .filter((c: any) => (c.__change24h ?? 0) >= 1)
+    // 시총순 정렬: rank 우선, 없으면 market_cap
+    .sort((a: any, b: any) => {
+      const ra = a.market_cap_rank ?? 999999;
+      const rb = b.market_cap_rank ?? 999999;
+      if (ra !== rb) return ra - rb;
+      return (b.market_cap ?? 0) - (a.market_cap ?? 0);
+    })
+    .slice(0, 6);
+}
 
   // 헤드라인 텍스트(고정 포맷 + SEO 한 줄)
   const headlineCore = `🔥 Crypto 혼조 | BTC ${pct(btc24h)} · ETH ${pct(eth24h)} | RSI: ${
@@ -183,8 +198,14 @@ export default async function Home() {
                 </div>
                 <div className="mt-2 text-sm text-brand-ink/70">시총: {usd(c.market_cap)}</div>
                 <div className="mt-1 text-sm">
-                  24h: <span className={c.price_change_percentage_24h >= 0 ? "text-emerald-300" : "text-rose-300"}>
-                    {pct(c.price_change_percentage_24h)}
+                  24h:{" "}
+                  <span className={(c.__change24h ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                    {(() => {
+                      const v = c.__change24h;
+                      return typeof v === "number" && isFinite(v)
+                        ? `${v >= 0 ? "▲" : "▼"}${Math.abs(v).toFixed(2)}%`
+                        : "—";
+                    })()}
                   </span>
                   <span className="text-brand-ink/50"> · 7d: — · 30d: —</span>
                 </div>
