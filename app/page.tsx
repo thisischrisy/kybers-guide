@@ -3,15 +3,16 @@ import Link from "next/link";
 import { AdSlot } from "@/components/AdSlot";
 import { KpiCard } from "@/components/KpiCard";
 import { rsi, sma } from "@/lib/indicators";
+import { getMarkets, getGlobal, type Market } from "@/lib/coingecko";
 
 export const revalidate = 900; // 홈은 15분 캐시
 
 // ---------- 외부/내부 데이터 ----------
-async function getGlobal() {
+/*async function getGlobal() {
   const r = await fetch("https://api.coingecko.com/api/v3/global", { next: { revalidate: 300 } });
   if (!r.ok) return null;
   return r.json();
-}
+}*/
 
 function safePct(n?: number | null) {
   return typeof n === "number" && isFinite(n) ? n : NaN;
@@ -41,11 +42,11 @@ async function getBTCPrices(days = 120) {
 }
 
 // /api/markets → 상위 코인들(24h 변화, 시총 등)
-async function getMarkets(per = 200) {
+/*async function getMarkets(per = 200) {
   const r = await fetch(`/api/markets?per=${per}`, { next: { revalidate: 300 } });
   if (!r.ok) return null;
   return r.json();
-}
+}*/
 
 // ---------- 포맷터 ----------
 function usd(n: number | null | undefined) {
@@ -69,23 +70,33 @@ export default async function Home() {
     getBTCPrices(120),
   ]);
 
-  const [markets, global] = await Promise.all([getMarkets(200), getGlobal()]);
+  // ✅ 외부 API 직접 호출
+  const [markets, global] = await Promise.all([
+    getMarkets(200),
+    getGlobal(),
+  ]);
 
   // A) 배너에 들어갈 색상 가이드용 텍스트만 사용
   // B) 헤드라인 카드용 값들 계산 (BTC/ETH 24h, RSI, FNG)
   const marketCap = global?.data?.total_market_cap?.usd ?? null;
   const marketCap24h = global?.data?.market_cap_change_percentage_24h_usd ?? null;
 
+/*  const domBTC = global?.data?.market_cap_percentage?.btc ?? null;
+  const domETH = global?.data?.market_cap_percentage?.eth ?? null;
+  const domALT = typeof domBTC === "number" && typeof domETH === "number" ? 100 - domBTC - domETH : null;*/
+  // 도미넌스 (스냅샷)
   const domBTC = global?.data?.market_cap_percentage?.btc ?? null;
   const domETH = global?.data?.market_cap_percentage?.eth ?? null;
-  const domALT = typeof domBTC === "number" && typeof domETH === "number" ? 100 - domBTC - domETH : null;
+  const domALT = (typeof domBTC === "number" && typeof domETH === "number")
+    ? Math.max(0, 100 - domBTC - domETH)
+    : null;
 
   // BTC/ETH 24h 변화율 (markets에서 가져옴)
-  const btc = Array.isArray(markets) ? markets.find((c: any) => c.id === "bitcoin") : null;
-  const eth = Array.isArray(markets) ? markets.find((c: any) => c.id === "ethereum") : null;
+  const btc = markets.find(m => m.id === "bitcoin");
+  const eth = markets.find(m => m.id === "ethereum");
   // 👇 JSX에서 쓰기 편하도록 이름을 btc24h / eth24h 로 만듭니다.
-  const btc24h = safePct(btc?.price_change_percentage_24h);
-  const eth24h = safePct(eth?.price_change_percentage_24h);
+  const btc24h = btc?.price_change_percentage_24h ?? Number.NaN;
+  const eth24h = eth?.price_change_percentage_24h ?? Number.NaN;
   // RSI(14) 계산
   const closes: number[] = Array.isArray(btcChart?.prices) ? btcChart.prices.map((p: any[]) => p[1]) : [];
   const rsiLatest = closes.length ? rsi(closes, 14).at(-1) ?? null : null;
