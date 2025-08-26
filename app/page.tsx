@@ -64,7 +64,6 @@ function pct(n: number | null | undefined) {
 
 // ---------- 메인 ----------
 export default async function Home() {
-  
   const [fng, btcChart] = await Promise.all([
     getFng(),
     getBTCPrices(120),
@@ -81,9 +80,6 @@ export default async function Home() {
   const marketCap = global?.data?.total_market_cap?.usd ?? null;
   const marketCap24h = global?.data?.market_cap_change_percentage_24h_usd ?? null;
 
-/*  const domBTC = global?.data?.market_cap_percentage?.btc ?? null;
-  const domETH = global?.data?.market_cap_percentage?.eth ?? null;
-  const domALT = typeof domBTC === "number" && typeof domETH === "number" ? 100 - domBTC - domETH : null;*/
   // 도미넌스 (스냅샷)
   const domBTC = global?.data?.market_cap_percentage?.btc ?? null;
   const domETH = global?.data?.market_cap_percentage?.eth ?? null;
@@ -97,6 +93,7 @@ export default async function Home() {
   // 👇 JSX에서 쓰기 편하도록 이름을 btc24h / eth24h 로 만듭니다.
   const btc24h = btc?.price_change_percentage_24h ?? Number.NaN;
   const eth24h = eth?.price_change_percentage_24h ?? Number.NaN;
+
   // RSI(14) 계산
   const closes: number[] = Array.isArray(btcChart?.prices) ? btcChart.prices.map((p: any[]) => p[1]) : [];
   const rsiLatest = closes.length ? rsi(closes, 14).at(-1) ?? null : null;
@@ -115,55 +112,60 @@ export default async function Home() {
     ? "탐욕"
     : "극탐욕";
 
-  // “오늘의 강력 매수 추천” (MVP: 24h +2% 이상 & 시총순 정렬 → 상위 6개)
-  
-  // 2) 강력 매수 추천 6개 (MVP 룰: 24h>2% AND 7d>3% AND 30d>5%)
-  const strongBuys: any[] = Array.isArray(markets)
-    ? markets
-        .filter((c: any) =>
-          safePct(c?.price_change_percentage_24h) > 2 &&
-          safePct(c?.price_change_percentage_7d_in_currency) > 3 &&
-          safePct(c?.price_change_percentage_30d_in_currency) > 5
-        )
-        .slice(0, 6)
-    : [];
-  /*let strongBuys: any[] = [];
-  if (Array.isArray(markets)) {
-  strongBuys = markets
-    .map((c: any) => {
-      const change24h =
-        c.price_change_percentage_24h ??
-        c.price_change_percentage_24h_in_currency ??
-        c.price_change_24h ??
-        0;
-      return { ...c, __change24h: change24h };
-    })
-    // 임시로 +1%로 완화 (필요하면 다시 +2%로 올리면 됩니다)
-    .filter((c: any) => (c.__change24h ?? 0) >= 1)
-    // 시총순 정렬: rank 우선, 없으면 market_cap
-    .sort((a: any, b: any) => {
-      const ra = a.market_cap_rank ?? 999999;
-      const rb = b.market_cap_rank ?? 999999;
-      if (ra !== rb) return ra - rb;
-      return (b.market_cap ?? 0) - (a.market_cap ?? 0);
-    })
-    .slice(0, 6);
-  }*/
+  // --- 혼합형(C): "조건 충족 우선 + Top-N 보충" -----------------
+  type Mkt = Market & {
+    price_change_percentage_7d_in_currency?: number;
+    price_change_percentage_30d_in_currency?: number;
+    score?: number;
+  };
+  const list: Mkt[] = Array.isArray(markets) ? markets : [];
 
-    // M2 도미넌스(+24h 변화)
-    const totalMcap = global?.data?.total_market_cap?.usd ?? NaN;
-    const totalPct24 = safePct(global?.data?.market_cap_change_percentage_24h_usd);
-    const btcDomNow = btc?.market_cap && totalMcap ? (btc.market_cap / totalMcap) * 100 : NaN;
-    const ethDomNow = eth?.market_cap && totalMcap ? (eth.market_cap / totalMcap) * 100 : NaN;
-    function domDelta(nowDom: number, coinMcap: number | undefined, coinPct24: number, totalNow: number, totalPct24: number) {
-      if (!isFinite(nowDom) || !coinMcap || !isFinite(coinPct24) || !isFinite(totalNow) || !isFinite(totalPct24)) return NaN;
-      const coinPrev = coinMcap / (1 + coinPct24 / 100);
-      const totalPrev = totalNow / (1 + totalPct24 / 100);
-      const prevDom = (coinPrev / totalPrev) * 100;
-      return nowDom - prevDom;
-    }
-    const btcDomDelta = domDelta(btcDomNow, btc?.market_cap, btc24h, totalMcap, totalPct24);
-    const ethDomDelta = domDelta(ethDomNow, eth?.market_cap, eth24h, totalMcap, totalPct24);
+  // 1) 강력 조건 (MVP 임계값: 24h > +2, 7d > +5, 30d > +10)
+  const strong = list.filter((c) => {
+    const p24 = c.price_change_percentage_24h ?? 0;
+    const p7d = c.price_change_percentage_7d_in_currency ?? 0;
+    const p30 = c.price_change_percentage_30d_in_currency ?? 0;
+    return p24 > 2 && p7d > 5 && p30 > 10;
+  });
+
+  // 2) 남은 후보에서 Top-N 점수 계산(24h 0.5, 7d 0.3, 30d 0.2 가중)
+  const strongIds = new Set(strong.map((c) => c.id));
+  const candidates = list.filter((c) => !strongIds.has(c.id));
+
+  const scored = candidates
+    .map((c) => {
+      const s24 = c.price_change_percentage_24h ?? 0;
+      const s7d = c.price_change_percentage_7d_in_currency ?? 0;
+      const s30 = c.price_change_percentage_30d_in_currency ?? 0;
+      const score = s24 * 0.5 + s7d * 0.3 + s30 * 0.2;
+      return { ...c, score };
+    })
+    .sort((a, b) => (b.score! - a.score!));
+
+  // 3) 최종 픽: 강력 우선, 부족분은 Top-N 보충 → 총 6개 보장
+  const fillCount = Math.max(0, 6 - strong.length);
+  const fill = scored.slice(0, fillCount);
+  const picks = [...strong.slice(0, 6), ...fill].slice(0, 6);
+
+  // 라벨링을 위해 id→"strong"/"top" 맵
+  const tagById = new Map<string, "strong" | "top">();
+  strong.slice(0, 6).forEach((c) => tagById.set(c.id, "strong"));
+  fill.forEach((c) => tagById.set(c.id, "top"));
+
+  // M2 도미넌스(+24h 변화)
+  const totalMcap = global?.data?.total_market_cap?.usd ?? NaN;
+  const totalPct24 = safePct(global?.data?.market_cap_change_percentage_24h_usd);
+  const btcDomNow = btc?.market_cap && totalMcap ? (btc.market_cap / totalMcap) * 100 : NaN;
+  const ethDomNow = eth?.market_cap && totalMcap ? (eth.market_cap / totalMcap) * 100 : NaN;
+  function domDelta(nowDom: number, coinMcap: number | undefined, coinPct24: number, totalNow: number, totalPct24: number) {
+    if (!isFinite(nowDom) || !coinMcap || !isFinite(coinPct24) || !isFinite(totalNow) || !isFinite(totalPct24)) return NaN;
+    const coinPrev = coinMcap / (1 + coinPct24 / 100);
+    const totalPrev = totalNow / (1 + totalPct24 / 100);
+    const prevDom = (coinPrev / totalPrev) * 100;
+    return nowDom - prevDom;
+  }
+  const btcDomDelta = domDelta(btcDomNow, btc?.market_cap, btc24h, totalMcap, totalPct24);
+  const ethDomDelta = domDelta(ethDomNow, eth?.market_cap, eth24h, totalMcap, totalPct24);
 
   // 헤드라인 텍스트(고정 포맷 + SEO 한 줄)
   const headlineCore = `🔥 Crypto 혼조 | BTC ${pct(btc24h)} · ETH ${pct(eth24h)} | RSI: ${
@@ -220,7 +222,7 @@ export default async function Home() {
         <div className="mt-2 text-xs text-brand-ink/70">{headlineSeo}</div>
       </section>
 
-      {/* c) 오늘의 강력 매수 추천 종목 */}
+      {/* c) 오늘의 강력 매수 추천 종목 (혼합형) */}
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className="flex items-center justify-between">
           <div className="text-sm text-brand-ink/80">오늘의 강력 매수 추천</div>
@@ -232,41 +234,59 @@ export default async function Home() {
           AI 알고리즘을 통해 단·중·장기 모두 “상승 우세”에 가까운 종목을 선별합니다.
         </p>
 
-        {strongBuys.length ? (
+        {picks.length ? (
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {strongBuys.map((c: any) => (
-              <Link
-                key={c.id}
-                href={`/coin/${c.id}`}
-                className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4 hover:border-brand-gold/50 transition"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold">
-                    {c.name} <span className="text-brand-ink/60">({c.symbol?.toUpperCase()})</span>
+            {picks.map((c) => {
+              const badge = tagById.get(c.id) === "strong" ? "강력조건" : "Top";
+              return (
+                <Link
+                  key={c.id}
+                  href={`/coin/${c.id}`}
+                  className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-4 hover:border-brand-gold/50 transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold">
+                      {c.name} <span className="text-brand-ink/60">({c.symbol?.toUpperCase()})</span>
+                    </div>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border ${
+                        badge === "강력조건"
+                          ? "border-emerald-400 text-emerald-300"
+                          : "border-brand-gold text-brand-gold"
+                      }`}
+                    >
+                      {badge}
+                    </span>
                   </div>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600/20 text-emerald-300 px-2 py-0.5 text-xs">
-                    매수
-                  </span>
-                </div>
-                <div className="mt-2 text-sm text-brand-ink/70">시총: {usd(c.market_cap)}</div>
-                <div className="mt-1 text-sm">
-                  24h:{" "}
-                  <span className={(c.__change24h ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
-                    {(() => {
-                      const v = c.__change24h;
-                      return typeof v === "number" && isFinite(v)
-                        ? `${v >= 0 ? "▲" : "▼"}${Math.abs(v).toFixed(2)}%`
-                        : "—";
-                    })()}
-                  </span>
-                  <span className="text-brand-ink/50"> · 7d: — · 30d: —</span>
-                </div>
-              </Link>
-            ))}
+
+                  <div className="mt-2 text-sm text-brand-ink/70">시총: {usd(c.market_cap)}</div>
+                  <div className="mt-1 text-sm">
+                    24h:{" "}
+                    <b className={(c.price_change_percentage_24h ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                      {pct(c.price_change_percentage_24h)}
+                    </b>
+                    <span className="text-brand-ink/50">
+                      {" "}· 7d:{" "}
+                      <b className={(c.price_change_percentage_7d_in_currency ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                        {pct(c.price_change_percentage_7d_in_currency)}
+                      </b>
+                      {" "}· 30d:{" "}
+                      <b className={(c.price_change_percentage_30d_in_currency ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                        {pct(c.price_change_percentage_30d_in_currency)}
+                      </b>
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         ) : (
           <div className="mt-3 text-sm text-brand-ink/70">조건을 만족하는 종목을 찾는 중…</div>
         )}
+
+        <div className="mt-3 text-[11px] text-brand-ink/60">
+          ※ 우선순위: <b>강력조건(24h&gt;2%, 7d&gt;5%, 30d&gt;10%)</b> 충족 종목 → 부족 시 <b>Top-N 가중치(24h 0.5 / 7d 0.3 / 30d 0.2)</b>로 보충하여 총 6개 노출.
+        </div>
       </section>
 
       {/* 중단 광고 (유지) */}
