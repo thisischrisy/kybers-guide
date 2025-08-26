@@ -134,10 +134,10 @@ export default async function Home() {
       {/* a) Kyber's Guide 배너 */}
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/60 shadow-card p-6 md:p-8">
         <div className="text-xs uppercase tracking-widest text-brand-gold/90 mb-2">Kyber’s Guide</div>
-        <h1 className="text-2xl md:text-3xl font-semibold leading-snug">흩어진 시장 신호를 정리합니다.</h1>
+        <h1 className="text-2xl md:text-3xl font-semibold leading-snug">초보도 이해하는 투자 타이밍 가이드</h1>
         <p className="mt-3 text-sm md:text-base text-brand-ink/80 leading-6">
-          차트를 몰라도 지금이 투자할 때인지 쉽게 알 수 있습니다 <br />
-          AI 분석으로 지금이 강세인지 약세인지 자동 판단하여, 초보~중급 투자자에게 명확한 방향을 제시합니다.
+          차트를 몰라도 투자할 때인지 알 수 있습니다 <br />
+          AI 분석으로 강세인지 약세인지 판단하여 명확한 방향을 제시합니다.
           <br />
           핵심만 간결하게 — <span className="font-semibold text-brand-gold">매수</span> ·{" "}
           <span className="font-semibold text-brand-gold">중립</span> ·{" "}
