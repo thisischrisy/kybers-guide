@@ -8,13 +8,13 @@ export const revalidate = 900; // 홈은 15분 캐시
 
 // ---------- 외부/내부 데이터 ----------
 async function getGlobal() {
-  try {
-    const r = await fetch("https://api.coingecko.com/api/v3/global", { cache: "no-store" });
-    if (!r.ok) return null;
-    return r.json();
-  } catch {
-    return null;
-  }
+  const r = await fetch("https://api.coingecko.com/api/v3/global", { next: { revalidate: 300 } });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+function safePct(n?: number | null) {
+  return typeof n === "number" && isFinite(n) ? n : NaN;
 }
 
 async function getFng() {
@@ -41,15 +41,10 @@ async function getBTCPrices(days = 120) {
 }
 
 // /api/markets → 상위 코인들(24h 변화, 시총 등)
-async function getMarkets() {
-  try {
-    const r = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL ?? ""}/api/markets`, { cache: "no-store" })
-      .catch(() => fetch("/api/markets", { cache: "no-store" })); // 서버/클라 모두 대응
-    if (!r?.ok) return null;
-    return r.json();
-  } catch {
-    return null;
-  }
+async function getMarkets(per = 200) {
+  const r = await fetch(`/api/markets?per=${per}`, { next: { revalidate: 300 } });
+  if (!r.ok) return null;
+  return r.json();
 }
 
 // ---------- 포맷터 ----------
@@ -68,12 +63,13 @@ function pct(n: number | null | undefined) {
 
 // ---------- 메인 ----------
 export default async function Home() {
-  const [global, fng, btcChart, markets] = await Promise.all([
-    getGlobal(),
+  
+  const [fng, btcChart] = await Promise.all([
     getFng(),
     getBTCPrices(120),
-    getMarkets(),
   ]);
+
+  const [markets, global] = await Promise.all([getMarkets(200), getGlobal()]);
 
   // A) 배너에 들어갈 색상 가이드용 텍스트만 사용
   // B) 헤드라인 카드용 값들 계산 (BTC/ETH 24h, RSI, FNG)
@@ -87,9 +83,9 @@ export default async function Home() {
   // BTC/ETH 24h 변화율 (markets에서 가져옴)
   const btc = Array.isArray(markets) ? markets.find((c: any) => c.id === "bitcoin") : null;
   const eth = Array.isArray(markets) ? markets.find((c: any) => c.id === "ethereum") : null;
-  const btc24h = btc?.price_change_percentage_24h ?? null;
-  const eth24h = eth?.price_change_percentage_24h ?? null;
-
+  // 👇 JSX에서 쓰기 편하도록 이름을 btc24h / eth24h 로 만듭니다.
+  const btc24h = safePct(btc?.price_change_percentage_24h);
+  const eth24h = safePct(eth?.price_change_percentage_24h);
   // RSI(14) 계산
   const closes: number[] = Array.isArray(btcChart?.prices) ? btcChart.prices.map((p: any[]) => p[1]) : [];
   const rsiLatest = closes.length ? rsi(closes, 14).at(-1) ?? null : null;
@@ -109,7 +105,18 @@ export default async function Home() {
     : "극탐욕";
 
   // “오늘의 강력 매수 추천” (MVP: 24h +2% 이상 & 시총순 정렬 → 상위 6개)
-  let strongBuys: any[] = [];
+  
+  // 2) 강력 매수 추천 6개 (MVP 룰: 24h>2% AND 7d>3% AND 30d>5%)
+  const strongBuys: any[] = Array.isArray(markets)
+    ? markets
+        .filter((c: any) =>
+          safePct(c?.price_change_percentage_24h) > 2 &&
+          safePct(c?.price_change_percentage_7d_in_currency) > 3 &&
+          safePct(c?.price_change_percentage_30d_in_currency) > 5
+        )
+        .slice(0, 6)
+    : [];
+  /*let strongBuys: any[] = [];
   if (Array.isArray(markets)) {
   strongBuys = markets
     .map((c: any) => {
@@ -130,7 +137,22 @@ export default async function Home() {
       return (b.market_cap ?? 0) - (a.market_cap ?? 0);
     })
     .slice(0, 6);
-}
+  }*/
+
+    // M2 도미넌스(+24h 변화)
+    const totalMcap = global?.data?.total_market_cap?.usd ?? NaN;
+    const totalPct24 = safePct(global?.data?.market_cap_change_percentage_24h_usd);
+    const btcDomNow = btc?.market_cap && totalMcap ? (btc.market_cap / totalMcap) * 100 : NaN;
+    const ethDomNow = eth?.market_cap && totalMcap ? (eth.market_cap / totalMcap) * 100 : NaN;
+    function domDelta(nowDom: number, coinMcap: number | undefined, coinPct24: number, totalNow: number, totalPct24: number) {
+      if (!isFinite(nowDom) || !coinMcap || !isFinite(coinPct24) || !isFinite(totalNow) || !isFinite(totalPct24)) return NaN;
+      const coinPrev = coinMcap / (1 + coinPct24 / 100);
+      const totalPrev = totalNow / (1 + totalPct24 / 100);
+      const prevDom = (coinPrev / totalPrev) * 100;
+      return nowDom - prevDom;
+    }
+    const btcDomDelta = domDelta(btcDomNow, btc?.market_cap, btc24h, totalMcap, totalPct24);
+    const ethDomDelta = domDelta(ethDomNow, eth?.market_cap, eth24h, totalMcap, totalPct24);
 
   // 헤드라인 텍스트(고정 포맷 + SEO 한 줄)
   const headlineCore = `🔥 Crypto 혼조 | BTC ${pct(btc24h)} · ETH ${pct(eth24h)} | RSI: ${
@@ -164,7 +186,26 @@ export default async function Home() {
       {/* b) 투자 헤드라인 */}
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">오늘의 투자 헤드라인</div>
+
+        {/* 핵심 헤드라인 */}
         <div className="text-base md:text-lg font-medium">{headlineCore}</div>
+
+        {/* BTC / ETH 24h 변동률 */}
+        <div className="mt-1 text-sm">
+          <span>
+            BTC {isFinite(btc24h) 
+              ? (btc24h > 0 ? "▲" : "▼") + Math.abs(btc24h).toFixed(2) + "%" 
+              : "-"}
+          </span>
+          {" · "}
+          <span>
+            ETH {isFinite(eth24h) 
+              ? (eth24h > 0 ? "▲" : "▼") + Math.abs(eth24h).toFixed(2) + "%" 
+              : "-"}
+          </span>
+        </div>
+
+        {/* SEO 최적화된 서브라인 */}
         <div className="mt-2 text-xs text-brand-ink/70">{headlineSeo}</div>
       </section>
 

@@ -1,36 +1,27 @@
 // app/api/markets/route.ts
 import { NextResponse } from "next/server";
 
-export const revalidate = 0;
+export const revalidate = 300; // 5분 캐시(서버 빌트인 캐시)
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const per = searchParams.get("per") || "200";
+
   const url =
-    "https://api.coingecko.com/api/v3/coins/markets" +
-    "?vs_currency=usd" +
-    "&order=market_cap_desc" +
-    "&per_page=250" +                // ✅ 100 → 250
-    "&page=1" +
-    "&sparkline=false" +
-    "&price_change_percentage=24h,7d,30d"; // 선택값(있으면 정렬/표시 유리)
+    `https://api.coingecko.com/api/v3/coins/markets` +
+    `?vs_currency=usd&order=market_cap_desc&per_page=${per}&page=1` +
+    `&sparkline=false&price_change_percentage=24h,7d,30d`;
 
   try {
     const r = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        "user-agent": "kybers-guide/1.0",
-      },
-      cache: "no-store",
-      next: { revalidate: 0 },
+      headers: { accept: "application/json" },
+      // 외부 API는 변동이 잦으니 서버 캐시만 사용
+      next: { revalidate: 300 },
     });
-
     if (!r.ok) {
-      return NextResponse.json({ error: "coingecko_failed", status: r.status }, { status: 500 });
+      return NextResponse.json({ error: "coingecko_failed" }, { status: 500 });
     }
-
     const json = await r.json();
-    if (!Array.isArray(json)) {
-      return NextResponse.json({ error: "unexpected_response" }, { status: 502 });
-    }
     return NextResponse.json(json);
   } catch (e) {
     return NextResponse.json({ error: "fetch_failed" }, { status: 500 });
