@@ -34,21 +34,22 @@ async function getBTCPrices(days = 120) {
   }
 }
 
-/** NASDAQ100 1d/1w: Stooq CSV */
-async function getNDXChange() {
+/** Stooq CSV (일봉)에서 1d/1w %변화 계산 */
+async function getStooqChange(ticker: string) {
   try {
-    const r = await fetch("https://stooq.com/q/d/l/?s=ndx.us&i=d", { cache: "no-store" });
+    const r = await fetch(`https://stooq.com/q/d/l/?s=${ticker}&i=d`, { cache: "no-store" });
     if (!r.ok) return { d1: NaN, w1: NaN };
     const csv = await r.text();
     const lines = csv.trim().split("\n");
-    if (lines.length < 8) return { d1: NaN, w1: NaN };
+    if (lines.length < 8) return { d1: NaN, w1: NaN }; // 최소 1주치 확보
     const rows = lines.slice(1).map((ln) => {
-      const [date, , , , close] = ln.split(",");
-      return { date, close: Number(close) };
+      const parts = ln.split(",");
+      const close = Number(parts[4]);
+      return { close };
     });
     const last = rows.at(-1)?.close ?? NaN;
     const prev = rows.at(-2)?.close ?? NaN;
-    const prevW = rows.at(-6)?.close ?? NaN;
+    const prevW = rows.at(-6)?.close ?? NaN; // 단순 영업일 5~6개 기준
     const d1 = isFinite(last) && isFinite(prev) ? ((last - prev) / prev) * 100 : NaN;
     const w1 = isFinite(last) && isFinite(prevW) ? ((last - prevW) / prevW) * 100 : NaN;
     return { d1, w1 };
@@ -74,8 +75,13 @@ function pct(n: number | null | undefined) {
 export default async function Home() {
   const [fng, btcChart] = await Promise.all([getFng(), getBTCPrices(120)]);
 
-  // 외부 API
-  const [markets, global, ndx] = await Promise.all([getMarkets(200), getGlobal(), getNDXChange()]);
+  // ixic: 나스닥 종합 / dxy: 달러인덱스
+  const [markets, global, ixic, dxy] = await Promise.all([
+    getMarkets(200),
+    getGlobal(),
+    getStooqChange("ixic.us"),
+    getStooqChange("dxy.us"),
+  ]);
 
   // 시총/도미넌스/심리
   const marketCap = global?.data?.total_market_cap?.usd ?? null;
@@ -207,15 +213,6 @@ export default async function Home() {
       <section className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">오늘의 투자 헤드라인</div>
         <div className="text-base md:text-lg font-medium">{headlineCore}</div>
-        <div className="mt-1 text-sm">
-          <span className={isFinite(btc24h) && btc24h >= 0 ? posClass : negClass}>
-            BTC {isFinite(btc24h) ? (btc24h > 0 ? "▲" : "▼") + Math.abs(btc24h).toFixed(2) + "%" : "—"}
-          </span>
-          {" · "}
-          <span className={isFinite(eth24h) && eth24h >= 0 ? posClass : negClass}>
-            ETH {isFinite(eth24h) ? (eth24h > 0 ? "▲" : "▼") + Math.abs(eth24h).toFixed(2) + "%" : "—"}
-          </span>
-        </div>
         <div className="mt-2 text-xs text-brand-ink/70">{headlineSeo}</div>
       </section>
 
@@ -299,59 +296,67 @@ export default async function Home() {
         <h1 className="text-2xl font-semibold tracking-wide mb-2">시장 감정자와 가능성 가정자를 위한 최고의 조명 대시보드</h1>
         <p className="text-brand-ink/80">Kyber’s Guide — 신뢰 가능한 요약과 직관적 시각화로 핵심만 제공합니다.</p>
 
-        {/* KPI 3개: 크립토 시가총액 / 글로벌 M2 통화량 / NASDAQ100 */}
+        {/*하나의 큰 카드*/}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
-          {/* 크립토 시가총액 */}
-          <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          {/* 1) 크립토 시가총액 */}
+          <div className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-5">
             <div className="text-sm text-brand-ink/80 mb-1">크립토 시가총액</div>
             <div className="text-2xl font-semibold text-brand-gold">{usd(marketCap)}</div>
             <div className="mt-2 text-xs text-brand-ink/80">
               1d:{" "}
-              <b className={Number(marketCap24h) >= 0 ? "text-emerald-300" : "text-rose-300"}>{pct(marketCap24h)}</b>{" "}
+              <b className={isFinite(marketCap24h) && marketCap24h! >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                {pct(marketCap24h)}
+              </b>{" "}
               · 1w: <span className="text-brand-ink/60">—</span>
             </div>
             <div className="mt-2 text-xs text-brand-ink/70">
-              <b>무엇을 의미?</b> 시총 증가 → <b>자금 유입</b>으로 대체로 코인에 우호적. 감소 → <b>유출</b>로 압박.
+              <b>무엇을 의미?</b> 시총 증가는 자금 유입(강세) 신호, 감소는 자금 이탈(약세) 신호로 해석합니다.
             </div>
           </div>
 
-          {/* 글로벌 M2 통화량 (MVP: 값/증감 대기) */}
-          <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
-            <div className="text-sm text-brand-ink/80 mb-1">글로벌 M2 통화량</div>
-            <div className="text-2xl font-semibold text-brand-gold">—</div>
-            <div className="mt-2 text-xs text-brand-ink/80">
-              1d: <span className="text-brand-ink/60">—</span> · 1w: <span className="text-brand-ink/60">—</span>
-            </div>
-            <div className="mt-2 text-xs text-brand-ink/70">
-              <b>무엇을 의미?</b> 통화량 <b>증가</b> → 유동성 확장으로 <b>코인 상승</b>에 우호적 / <b>감소</b> →
-              유동성 축소로 <b>코인 하락</b> 압력 / 변화 미미 → <b>중립</b>.
-            </div>
-          </div>
-
-          {/* NASDAQ100 */}
-          <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
-            <div className="text-sm text-brand-ink/80 mb-1">NASDAQ 100</div>
+          {/* 2) 달러 인덱스 (DXY) — M2 대체 */}
+          <div className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-5">
+            <div className="text-sm text-brand-ink/80 mb-1">달러 인덱스 (DXY)</div>
             <div className="text-2xl font-semibold text-brand-gold">
-              {isFinite(ndx?.d1) ? `${pct(ndx!.d1)} (1d)` : "—"}
+              {isFinite(dxy?.d1) ? `${pct(dxy!.d1)} (1d)` : "—"}
             </div>
             <div className="mt-2 text-xs text-brand-ink/80">
               1w:{" "}
-              <b className={isFinite(ndx?.w1) && (ndx!.w1 >= 0) ? "text-emerald-300" : "text-rose-300"}>
-                {isFinite(ndx?.w1) ? pct(ndx!.w1) : "—"}
+              <b className={isFinite(dxy?.w1) && dxy!.w1 >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                {isFinite(dxy?.w1) ? pct(dxy!.w1) : "—"}
+              </b>
+            </div>
+            <div className="mt-2 text-xs text-brand-ink/70">
+              <b>무엇을 의미?</b> DXY <b>상승</b>→ 달러 강세·유동성 위축 경향으로 <b>코인 약세</b> 압력 /
+              <b> 하락</b>→ 달러 약세·리스크온 경향으로 <b>코인 강세</b>에 우호적.
+            </div>
+          </div>
+
+          {/* 3) NASDAQ 종합 (IXIC) — NASDAQ100 대체 */}
+          <div className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-5">
+            <div className="text-sm text-brand-ink/80 mb-1">NASDAQ 종합 (IXIC)</div>
+            <div className="text-2xl font-semibold text-brand-gold">
+              {isFinite(ixic?.d1) ? `${pct(ixic!.d1)} (1d)` : "—"}
+            </div>
+            <div className="mt-2 text-xs text-brand-ink/80">
+              1w:{" "}
+              <b className={isFinite(ixic?.w1) && ixic!.w1 >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                {isFinite(ixic?.w1) ? pct(ixic!.w1) : "—"}
               </b>
             </div>
             <div className="mt-2 text-xs text-brand-ink/70">
               <b>무엇을 의미?</b>{" "}
-              {isFinite(ndx?.d1) && isFinite(ndx?.w1)
-                ? ndx!.d1 > 0 && ndx!.w1 > 0
+              {isFinite(ixic?.d1) && isFinite(ixic?.w1)
+                ? ixic!.d1 > 0 && ixic!.w1 > 0
                   ? "주식 위험자산 강세 → 코인 상승에 우호적."
-                  : ndx!.d1 < 0 && ndx!.w1 < 0
+                  : ixic!.d1 < 0 && ixic!.w1 < 0
                   ? "주식 약세 지속 → 코인에도 하방 압력."
                   : "혼조 → 방향성 모색 국면."
                 : "지표 수집 중."}
             </div>
           </div>
         </div>
+
 
         {/* 2단: 크립토 도미넌스 / 크립토 공포탐욕 지수 */}
         <div className="grid md:grid-cols-2 gap-6 mt-6">
