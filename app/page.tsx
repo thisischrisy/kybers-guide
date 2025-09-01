@@ -34,6 +34,8 @@ async function getBTCPrices(days = 120) {
   }
 }
 
+
+
 /** Stooq CSV (일봉)에서 1d/1w %변화 계산 */
 async function getStooqChange(ticker: string) {
   try {
@@ -58,6 +60,17 @@ async function getStooqChange(ticker: string) {
   }
 }
 
+/** 여러 후보 심볼 중, 처음으로 정상값(숫자)을 반환하는 것을 선택 */
+async function firstWorkingChange(symbols: string[]) {
+  for (const s of symbols) {
+    const r = await getStooqChange(s);
+    if (r && isFinite(r.d1) && isFinite(r.w1)) {
+      return { ...r, _symbolUsed: s };
+    }
+  }
+  return { d1: NaN, w1: NaN, _symbolUsed: null as string | null };
+}
+
 // ---------- 포맷터 ----------
 function usd(n: number | null | undefined) {
   if (typeof n !== "number" || !isFinite(n)) return "-";
@@ -73,15 +86,22 @@ function pct(n: number | null | undefined) {
 }
 
 export default async function Home() {
-  const [fng, btcChart] = await Promise.all([getFng(), getBTCPrices(120)]);
+ 
 
   // ixic: 나스닥 종합 / dxy: 달러인덱스
-  const [markets, global, ixic, dxy] = await Promise.all([
+  const [markets, global] = await Promise.all([
     getMarkets(200),
-    getGlobal(),
-    getStooqChange("ixic.us"),
-    getStooqChange("dxy.us"),
+    getGlobal()
   ]);
+
+  const [fng, btcChart, ixic, dxy] = await Promise.all([
+  getFng(),
+  getBTCPrices(120),
+  // 나스닥 종합(IXIC) 후보 심볼들
+  firstWorkingChange(["^ixic", "ixic", "ixic.us"]),
+  // 달러인덱스(DXY) 후보 심볼들
+  firstWorkingChange(["dxy", "^dxy", "dxy.us"]),
+]);
 
   // 시총/도미넌스/심리
   const marketCap = global?.data?.total_market_cap?.usd ?? null;
