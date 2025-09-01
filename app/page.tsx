@@ -60,15 +60,32 @@ async function getStooqChange(ticker: string) {
   }
 }
 
-/** 여러 후보 심볼 중, 처음으로 정상값(숫자)을 반환하는 것을 선택 */
-async function firstWorkingChange(symbols: string[]) {
-  for (const s of symbols) {
-    const r = await getStooqChange(s);
-    if (r && isFinite(r.d1) && isFinite(r.w1)) {
-      return { ...r, _symbolUsed: s };
+/** 여러 심볼 후보 중 첫 번째로 성공한 심볼의 1d/1w 변동률을 돌려줌 */
+async function firstWorkingChange(candidates: string[]) {
+  for (const s of candidates) {
+    try {
+      const r = await fetch(`https://stooq.com/q/d/l/?s=${s}&i=d`, { cache: "no-store" });
+      if (!r.ok) continue;
+      const csv = (await r.text()).trim();
+      if (!csv || csv.includes("No data")) continue;
+
+      const lines = csv.split("\n");
+      if (lines.length < 8) continue; // 최소 1주치 확보
+      const rows = lines.slice(1).map((ln) => {
+        const parts = ln.split(",");
+        return { close: Number(parts[4]) };
+      });
+      const last = rows.at(-1)?.close ?? NaN;
+      const prev = rows.at(-2)?.close ?? NaN;
+      const prevW = rows.at(-6)?.close ?? NaN; // 단순 영업일 5~6개 기준
+      const d1 = isFinite(last) && isFinite(prev) ? ((last - prev) / prev) * 100 : NaN;
+      const w1 = isFinite(last) && isFinite(prevW) ? ((last - prevW) / prevW) * 100 : NaN;
+      return { d1, w1, _symbolUsed: s };
+    } catch {
+      // 다음 후보 시도
     }
   }
-  return { d1: NaN, w1: NaN, _symbolUsed: null as string | null };
+  return { d1: NaN, w1: NaN, _symbolUsed: undefined };
 }
 
 // ---------- 포맷터 ----------
@@ -102,10 +119,10 @@ const [fng, btcChart, ixic, dxy] = await Promise.all([
   getBTCPrices(120),
 
   // 나스닥 종합/100 (프록시 포함: QQQ)
-  firstWorkingChange(["^ixic", "ixic", "ixic.us", "^ndx", "ndx", "qqq.us"]),
+  firstWorkingChange(["qqq.us", "^ndx", "ndx", "^ixic", "ixic", "ixic.us"]),
 
   // 달러인덱스 (프록시 포함: UUP)
-  firstWorkingChange(["dxy", "^dxy", "dxy.us", "uup.us"]),
+  firstWorkingChange(["uup.us", "dxy", "^dxy", "dxy.us"]),
 ]);
 
   // 시총/도미넌스/심리
