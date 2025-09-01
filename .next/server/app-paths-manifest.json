@@ -1,7 +1,1 @@
-{
-  "/page": "app/page.js",
-  "/btc/page": "app/btc/page.js",
-  "/api/btc/market-chart/route": "app/api/btc/market-chart/route.js",
-  "/overview/page": "app/overview/page.js",
-  "/api/stables/route": "app/api/stables/route.js"
-}
+{}

@@ -6,6 +6,8 @@ import { rsi } from "@/lib/indicators";
 import { getMarkets, getGlobal, type Market } from "@/lib/coingecko";
 
 export const revalidate = 900; // 홈은 15분 캐시
+// ★ ISR에서 외부 CSV가 종종 타임아웃나므로, 동적 렌더를 강제하면 즉시 반영됩니다(원치 않으면 주석 처리).
+// export const dynamic = "force-dynamic";
 
 function safePct(n?: number | null) {
   return typeof n === "number" && isFinite(n) ? n : NaN;
@@ -34,24 +36,71 @@ async function getBTCPrices(days = 120) {
   }
 }
 
+/** -------------------------------------------------------------------
+ *  Stooq 보강: 도메인 미러, UA 헤더, 타임아웃, 파싱 보강
+ *  ------------------------------------------------------------------- */
 
+// ★ 타임아웃 도우미
+function withTimeout<T>(p: Promise<T>, ms = 5000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const id = setTimeout(() => reject(new Error("fetch_timeout")), ms);
+    p.then((v) => {
+      clearTimeout(id);
+      resolve(v);
+    }).catch((e) => {
+      clearTimeout(id);
+      reject(e);
+    });
+  });
+}
+
+// ★ CSV 한 줄 파서(윈도우 개행/공백/빈값 보정)
+function parseRow(line: string) {
+  const parts = line.split(",").map((s) => s.trim());
+  // Date,Open,High,Low,Close,Volume
+  const close = Number(parts[4]);
+  return { close: isFinite(close) ? close : NaN };
+}
+
+// ★ 실제 CSV 요청 (도메인 폴백 + 헤더 + 타임아웃)
+async function fetchStooqCsv(ticker: string) {
+  const urls = [
+    `https://stooq.com/q/d/l/?s=${ticker}&i=d`,
+    `https://stooq.pl/q/d/l/?s=${ticker}&i=d`,
+  ];
+  const headers = {
+    "user-agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
+    accept: "text/csv,*/*;q=0.8",
+  } as Record<string, string>;
+
+  for (const url of urls) {
+    try {
+      const r = await withTimeout(fetch(url, { cache: "no-store", headers }), 5000);
+      if (!r.ok) continue;
+      const text = (await r.text()).trim();
+      if (!text || /No data/i.test(text)) continue;
+      return text;
+    } catch {
+      // 다음 미러 시도
+    }
+  }
+  return null;
+}
 
 /** Stooq CSV (일봉)에서 1d/1w %변화 계산 */
 async function getStooqChange(ticker: string) {
   try {
-    const r = await fetch(`https://stooq.com/q/d/l/?s=${ticker}&i=d`, { cache: "no-store" });
-    if (!r.ok) return { d1: NaN, w1: NaN };
-    const csv = await r.text();
-    const lines = csv.trim().split("\n");
-    if (lines.length < 8) return { d1: NaN, w1: NaN }; // 최소 1주치 확보
-    const rows = lines.slice(1).map((ln) => {
-      const parts = ln.split(",");
-      const close = Number(parts[4]);
-      return { close };
-    });
-    const last = rows.at(-1)?.close ?? NaN;
-    const prev = rows.at(-2)?.close ?? NaN;
-    const prevW = rows.at(-6)?.close ?? NaN; // 단순 영업일 5~6개 기준
+    const csv = await fetchStooqCsv(ticker);
+    if (!csv) return { d1: NaN, w1: NaN };
+    const lines = csv.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length < 2) return { d1: NaN, w1: NaN };
+    // 헤더 제거
+    const rows = lines.slice(1).map(parseRow).filter((r) => isFinite(r.close));
+    if (rows.length < 6) return { d1: NaN, w1: NaN }; // 최소 1주치
+    const last = rows.at(-1)!.close;
+    const prev = rows.at(-2)!.close;
+    const prevW = rows.at(-6)!.close; // 영업일 기준 대략 1주
     const d1 = isFinite(last) && isFinite(prev) ? ((last - prev) / prev) * 100 : NaN;
     const w1 = isFinite(last) && isFinite(prevW) ? ((last - prevW) / prevW) * 100 : NaN;
     return { d1, w1 };
@@ -64,20 +113,15 @@ async function getStooqChange(ticker: string) {
 async function firstWorkingChange(candidates: string[]) {
   for (const s of candidates) {
     try {
-      const r = await fetch(`https://stooq.com/q/d/l/?s=${s}&i=d`, { cache: "no-store" });
-      if (!r.ok) continue;
-      const csv = (await r.text()).trim();
-      if (!csv || csv.includes("No data")) continue;
-
-      const lines = csv.split("\n");
-      if (lines.length < 8) continue; // 최소 1주치 확보
-      const rows = lines.slice(1).map((ln) => {
-        const parts = ln.split(",");
-        return { close: Number(parts[4]) };
-      });
-      const last = rows.at(-1)?.close ?? NaN;
-      const prev = rows.at(-2)?.close ?? NaN;
-      const prevW = rows.at(-6)?.close ?? NaN; // 단순 영업일 5~6개 기준
+      const csv = await fetchStooqCsv(s); // ★ 보강된 fetch 사용
+      if (!csv) continue;
+      const lines = csv.split(/\r?\n/).map((t) => t.trim()).filter(Boolean);
+      if (lines.length < 2) continue;
+      const rows = lines.slice(1).map(parseRow).filter((r) => isFinite(r.close));
+      if (rows.length < 6) continue;
+      const last = rows.at(-1)!.close;
+      const prev = rows.at(-2)!.close;
+      const prevW = rows.at(-6)!.close;
       const d1 = isFinite(last) && isFinite(prev) ? ((last - prev) / prev) * 100 : NaN;
       const w1 = isFinite(last) && isFinite(prevW) ? ((last - prevW) / prevW) * 100 : NaN;
       return { d1, w1, _symbolUsed: s };
@@ -103,27 +147,19 @@ function pct(n: number | null | undefined) {
 }
 
 export default async function Home() {
- 
+  // 코인 마켓 + 글로벌 스냅샷
+  const [markets, global] = await Promise.all([getMarkets(200), getGlobal()]);
 
-  // ixic: 나스닥 종합 / dxy: 달러인덱스
-  const [markets, global] = await Promise.all([
-    getMarkets(200),
-    getGlobal()
+  // 외부 지표
+  const [fng, btcChart, ixic, dxy] = await Promise.all([
+    getFng(),
+    getBTCPrices(120),
+
+    // ★ 나스닥(프록시 우선: QQQ)
+    firstWorkingChange(["qqq.us", "^ndx", "ndx", "^ixic", "ixic", "ixic.us"]),
+    // ★ DXY(프록시 우선: UUP)
+    firstWorkingChange(["uup.us", "dxy", "^dxy", "dxy.us"]),
   ]);
-
- // 기존 firstWorkingChange는 그대로 사용
-// 호출부만 다음처럼 바꿔주세요:
-
-const [fng, btcChart, ixic, dxy] = await Promise.all([
-  getFng(),
-  getBTCPrices(120),
-
-  // 나스닥 종합/100 (프록시 포함: QQQ)
-  firstWorkingChange(["qqq.us", "^ndx", "ndx", "^ixic", "ixic", "ixic.us"]),
-
-  // 달러인덱스 (프록시 포함: UUP)
-  firstWorkingChange(["uup.us", "dxy", "^dxy", "dxy.us"]),
-]);
 
   // 시총/도미넌스/심리
   const marketCap = global?.data?.total_market_cap?.usd ?? null;
@@ -198,10 +234,8 @@ const [fng, btcChart, ixic, dxy] = await Promise.all([
     const e = eth24h;
     const r = typeof rsiLatest === "number" ? rsiLatest : NaN;
     const f = fgiClass; // 텍스트 레벨 사용
-
     const pos = (x: number) => isFinite(x) && x > 1;
     const neg = (x: number) => isFinite(x) && x < -1;
-
     if (pos(b) && pos(e) && (f === "탐욕" || f === "극탐욕" || (isFinite(r) && r >= 55))) return "강세";
     if (neg(b) && neg(e) && (f === "공포" || f === "극공포" || (isFinite(r) && r <= 45))) return "약세";
     return "혼조";
@@ -338,7 +372,7 @@ const [fng, btcChart, ixic, dxy] = await Promise.all([
         <h1 className="text-2xl font-semibold tracking-wide mb-2">시장 감정자와 가능성 가정자를 위한 최고의 조명 대시보드</h1>
         <p className="text-brand-ink/80">Kyber’s Guide — 신뢰 가능한 요약과 직관적 시각화로 핵심만 제공합니다.</p>
 
-        {/*하나의 큰 카드*/}
+        {/* 하나의 큰 카드 */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
           {/* 1) 크립토 시가총액 */}
           <div className="rounded-2xl border border-brand-line/30 bg-brand-card/60 p-5">
@@ -396,15 +430,14 @@ const [fng, btcChart, ixic, dxy] = await Promise.all([
                   : "혼조 → 방향성 모색 국면."
                 : "지표 수집 중."}
             </div>
-            {ixic._symbolUsed && (
-            <div className="mt-1 text-[10px] text-brand-ink/50">NASDAQ 사용 심볼: {ixic._symbolUsed}</div>
+            {ixic?._symbolUsed && (
+              <div className="mt-1 text-[10px] text-brand-ink/50">NASDAQ 사용 심볼: {ixic._symbolUsed}</div>
             )}
-            {dxy._symbolUsed && (
+            {dxy?._symbolUsed && (
               <div className="mt-1 text-[10px] text-brand-ink/50">DXY 사용 심볼: {dxy._symbolUsed}</div>
             )}
           </div>
         </div>
-
 
         {/* 2단: 크립토 도미넌스 / 크립토 공포탐욕 지수 */}
         <div className="grid md:grid-cols-2 gap-6 mt-6">
@@ -413,15 +446,15 @@ const [fng, btcChart, ixic, dxy] = await Promise.all([
             <div className="text-sm text-brand-ink/80 mb-2">크립토 도미넌스 (BTC/ETH/ALT)</div>
             <div className="text-sm">
               <div className="mb-1">
-                BTC: {typeof domBTC === "number" ? domBTC.toFixed(1) : "—"}%{" "}
+                BTC: {typeof domBTC === "number" ? domBTC.toFixed(1) : "—"}{" "}
                 <span className="ml-1 text-brand-ink/60">({pct(btc24h)} / 24h)</span>
               </div>
               <div className="mb-1">
-                ETH: {typeof domETH === "number" ? domETH.toFixed(1) : "—"}%{" "}
+                ETH: {typeof domETH === "number" ? domETH.toFixed(1) : "—"}{" "}
                 <span className="ml-1 text-brand-ink/60">({pct(eth24h)} / 24h)</span>
               </div>
               <div>
-                ALT: {typeof domALT === "number" ? domALT.toFixed(1) : "—"}%{" "}
+                ALT: {typeof domALT === "number" ? domALT.toFixed(1) : "—"}{" "}
                 <span className="ml-1 text-brand-ink/60">(—)</span>
               </div>
             </div>
