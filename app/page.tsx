@@ -94,13 +94,18 @@ export default async function Home() {
     getGlobal()
   ]);
 
-  const [fng, btcChart, ixic, dxy] = await Promise.all([
+ // 기존 firstWorkingChange는 그대로 사용
+// 호출부만 다음처럼 바꿔주세요:
+
+const [fng, btcChart, ixic, dxy] = await Promise.all([
   getFng(),
   getBTCPrices(120),
-  // 나스닥 종합(IXIC) 후보 심볼들
-  firstWorkingChange(["^ixic", "ixic", "ixic.us"]),
-  // 달러인덱스(DXY) 후보 심볼들
-  firstWorkingChange(["dxy", "^dxy", "dxy.us"]),
+
+  // 나스닥 종합/100 (프록시 포함: QQQ)
+  firstWorkingChange(["^ixic", "ixic", "ixic.us", "^ndx", "ndx", "qqq.us"]),
+
+  // 달러인덱스 (프록시 포함: UUP)
+  firstWorkingChange(["dxy", "^dxy", "dxy.us", "uup.us"]),
 ]);
 
   // 시총/도미넌스/심리
@@ -374,6 +379,12 @@ export default async function Home() {
                   : "혼조 → 방향성 모색 국면."
                 : "지표 수집 중."}
             </div>
+            {ixic._symbolUsed && (
+            <div className="mt-1 text-[10px] text-brand-ink/50">NASDAQ 사용 심볼: {ixic._symbolUsed}</div>
+            )}
+            {dxy._symbolUsed && (
+              <div className="mt-1 text-[10px] text-brand-ink/50">DXY 사용 심볼: {dxy._symbolUsed}</div>
+            )}
           </div>
         </div>
 
