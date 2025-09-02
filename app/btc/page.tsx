@@ -8,9 +8,8 @@ import { SIGNAL_EMOJI, SIGNAL_LABEL } from "@/lib/signal";
 
 export const revalidate = 1800; // 30분 캐시
 
-// TradingView 메인/미니 차트(클라이언트 전용)
+// TradingView 메인 차트(클라이언트 전용)
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
-const TvMini  = dynamic(() => import("@/components/TvMini").then(m => m.TvMini), { ssr: false });
 
 /** BTC 가격(일봉) */
 async function getBTC(days = 220) {
@@ -27,7 +26,7 @@ async function getBTC(days = 220) {
 }
 
 /** BTC 가격(시간봉) — 1h/4h 산출용 */
-async function getBTCHourly(days = 7) {
+async function getBTCHourly(days = 60) {
   try {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=hourly`,
@@ -38,6 +37,26 @@ async function getBTCHourly(days = 7) {
   } catch {
     return null;
   }
+}
+
+/** 1시간봉 배열을 4시간봉 종가 배열로 집계(4개 단위로 마지막 값 사용) */
+function to4HCloses(hourlyPrices: [number, number][]) {
+  const closes: number[] = [];
+  for (let i = 0; i < hourlyPrices.length; i += 4) {
+    const last = hourlyPrices[Math.min(i + 3, hourlyPrices.length - 1)];
+    closes.push(last?.[1]);
+  }
+  return closes;
+}
+
+/** 간단 MA 해석 */
+function maSignal(price: number, ma50: number, ma200: number) {
+  if (!isFinite(price) || !isFinite(ma50) || !isFinite(ma200)) {
+    return { tone: "neutral" as const, text: "데이터 수집 중" };
+  }
+  if (price > ma50 && price > ma200) return { tone: "buy" as const, text: "가격이 50·200선 위 — 상승 우세" };
+  if (price < ma50 && price < ma200) return { tone: "sell" as const, text: "가격이 50·200선 아래 — 하락 우세" };
+  return { tone: "neutral" as const, text: "이동평균 사이 — 중립/변곡 구간" };
 }
 
 function usd(n: number | null | undefined) {
@@ -59,7 +78,7 @@ function toneClass(n: number | null | undefined) {
 
 type Tone = "buy" | "neutral" | "sell";
 
-/** 지표 종합 판단(MVP) */
+/** 지표 종합 판단(MVP, 일봉 기준) */
 function summarizeIndicators(closes: number[]) {
   if (!Array.isArray(closes) || closes.length < 200) {
     return {
@@ -146,20 +165,34 @@ function pctFromTail(arr: number[], k: number) {
 
 export default async function BTCPage() {
   // 데이터
-  const [btcDaily, btcHourly] = await Promise.all([getBTC(220), getBTCHourly(7)]);
+  const [btcDaily, btcHourly] = await Promise.all([getBTC(260), getBTCHourly(60)]);
   const closesD: number[] = Array.isArray(btcDaily?.prices) ? btcDaily.prices.map((p: any[]) => p[1]) : [];
-  const closesH: number[] = Array.isArray(btcHourly?.prices) ? btcHourly.prices.map((p: any[]) => p[1]) : [];
+  const hourly: [number, number][] = Array.isArray(btcHourly?.prices) ? btcHourly.prices as [number, number][] : [];
+
   const last = closesD.at(-1) ?? null;
 
-  // 지표 요약
+  // 지표 요약(일봉)
   const s = summarizeIndicators(closesD);
 
-  // 시간대별 변화율
+  // 시간대별 변화율 (1h/4h: 시간봉 기반, 1d/1w/1m: 일봉 기반 근사)
+  const closesH = hourly.map(p => p[1]);
   const chg1h = pctFromTail(closesH, 1);
   const chg4h = pctFromTail(closesH, 4);
   const chg1d = pctFromTail(closesD, 1);
   const chg1w = pctFromTail(closesD, 7);
   const chg1m = pctFromTail(closesD, 30);
+
+  // 4H/1D MA 해석용
+  const closes4H = to4HCloses(hourly);
+  const p4H = closes4H.at(-1) ?? NaN;
+  const ma50_4H = sma(closes4H, 50).at(-1) ?? NaN;
+  const ma200_4H = sma(closes4H, 200).at(-1) ?? NaN;
+  const sig4H = maSignal(p4H, ma50_4H, ma200_4H);
+
+  const dPrice = closesD.at(-1) ?? NaN;
+  const dMA50  = sma(closesD, 50).at(-1) ?? NaN;
+  const dMA200 = sma(closesD, 200).at(-1) ?? NaN;
+  const sig1D = maSignal(dPrice, dMA50, dMA200);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
@@ -181,11 +214,9 @@ export default async function BTCPage() {
         <div className="mt-3 text-sm text-brand-ink/80">
           현재가(스냅샷): {last ? usd(last) : "-"}
         </div>
-
-        {/* BTC는 시장 엔진 메시지 */}
         <div className="mt-3 text-xs text-brand-ink/70">
-          <b>왜 중요?</b> 비트코인은 크립토 전체의 <b>유동성·심리의 엔진</b>입니다. BTC의 추세 전환은
-          알트코인 섹터의 <b>확대/위축</b>으로 파급되므로, BTC 방향성 파악이 먼저입니다.
+          <b>왜 중요?</b> 비트코인은 크립토 전체의 <b>유동성·심리의 엔진</b>입니다. BTC의 추세 전환은 알트코인 섹터의
+          <b> 확대/위축</b>으로 파급되므로, BTC 방향성 파악이 먼저입니다.
         </div>
       </div>
 
@@ -193,6 +224,53 @@ export default async function BTCPage() {
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
         <TvChart symbol="bitcoin" interval="D" height={480} />
+      </section>
+
+      {/* BTC 단기/중기 해석 (차트 없이 해석만) */}
+      <section className="grid md:grid-cols-2 gap-6">
+        {/* 4H 해석 */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-sm text-brand-ink/80 mb-2">BTC (4H) — 이동평균 해석</div>
+          <div className="text-sm">
+            <div>가격: <b>{isFinite(p4H) ? `$${Math.round(p4H).toLocaleString()}` : "—"}</b></div>
+            <div>MA50: <b>{isFinite(ma50_4H) ? `$${Math.round(ma50_4H).toLocaleString()}` : "—"}</b></div>
+            <div>MA200: <b>{isFinite(ma200_4H) ? `$${Math.round(ma200_4H).toLocaleString()}` : "—"}</b></div>
+            <div className="mt-2">
+              신호:{" "}
+              <span className={
+                sig4H.tone === "buy" ? "text-emerald-300" :
+                sig4H.tone === "sell" ? "text-rose-300" : "text-amber-300"
+              }>
+                {sig4H.text}
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 text-[11px] text-brand-ink/60">
+            ※ 기준: 가격이 50·200선 위면 상승 우세, 아래면 하락 우세, 사이면 중립/변곡으로 단순화.
+          </div>
+        </div>
+
+        {/* 1D 해석 */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-sm text-brand-ink/80 mb-2">BTC (1D) — 이동평균 해석</div>
+          <div className="text-sm">
+            <div>가격: <b>{isFinite(dPrice) ? `$${Math.round(dPrice).toLocaleString()}` : "—"}</b></div>
+            <div>MA50: <b>{isFinite(dMA50) ? `$${Math.round(dMA50).toLocaleString()}` : "—"}</b></div>
+            <div>MA200: <b>{isFinite(dMA200) ? `$${Math.round(dMA200).toLocaleString()}` : "—"}</b></div>
+            <div className="mt-2">
+              신호:{" "}
+              <span className={
+                sig1D.tone === "buy" ? "text-emerald-300" :
+                sig1D.tone === "sell" ? "text-rose-300" : "text-amber-300"
+              }>
+                {sig1D.text}
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 text-[11px] text-brand-ink/60">
+            ※ 1D는 시장의 ‘중기’ 방향 참고용. (비트코인은 전체 시장의 기조를 좌우하는 핵심 자산입니다.)
+          </div>
+        </div>
       </section>
 
       {/* 시간대별 변화율 (1h/4h/1d/1w/1m) */}
@@ -221,19 +299,7 @@ export default async function BTCPage() {
           </div>
         </div>
         <div className="mt-2 text-[11px] text-brand-ink/60">
-          ※ 1h/4h는 시간봉(최근 7일), 1d/1w/1m는 일봉 기반(근사치)입니다.
-        </div>
-      </section>
-
-      {/* 미니 프리뷰 차트 (4H, 1D) */}
-      <section className="grid md:grid-cols-2 gap-6">
-        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
-          <div className="text-sm text-brand-ink/80 mb-2">BTC 미니 차트 (4H)</div>
-          <TvMini tvSymbol="BINANCE:BTCUSDT" title="BTC (4H)" dateRange="4H" height={200} />
-        </div>
-        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
-          <div className="text-sm text-brand-ink/80 mb-2">BTC 미니 차트 (1D)</div>
-          <TvMini tvSymbol="BINANCE:BTCUSDT" title="BTC (1D)" dateRange="1D" height={200} />
+          ※ 1h/4h는 시간봉(최근 60일), 1d/1w/1m는 일봉 기반(근사치)입니다.
         </div>
       </section>
 
