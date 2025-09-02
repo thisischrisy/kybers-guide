@@ -8,11 +8,12 @@ import { SIGNAL_EMOJI, SIGNAL_LABEL } from "@/lib/signal";
 
 export const revalidate = 1800; // 30분 캐시
 
-// TradingView 차트(클라이언트 전용)
+// TradingView 메인/미니 차트(클라이언트 전용)
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
+const TvMini  = dynamic(() => import("@/components/TvMini").then(m => m.TvMini), { ssr: false });
 
 /** BTC 가격(일봉) */
-async function getBTC(days = 180) {
+async function getBTC(days = 220) {
   try {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`,
@@ -25,12 +26,35 @@ async function getBTC(days = 180) {
   }
 }
 
+/** BTC 가격(시간봉) — 1h/4h 산출용 */
+async function getBTCHourly(days = 7) {
+  try {
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=hourly`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json(); // { prices: [ [ts, price], ...] } (hourly)
+  } catch {
+    return null;
+  }
+}
+
 function usd(n: number | null | undefined) {
   if (typeof n !== "number" || !isFinite(n)) return "-";
   if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
   if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   return `$${Math.round(n).toLocaleString()}`;
+}
+function pctTxt(n: number | null | undefined) {
+  if (typeof n !== "number" || !isFinite(n)) return "—";
+  const sign = n > 0 ? "▲" : n < 0 ? "▼" : "";
+  return `${sign}${Math.abs(n).toFixed(2)}%`;
+}
+function toneClass(n: number | null | undefined) {
+  if (typeof n !== "number" || !isFinite(n)) return "text-brand-ink/60";
+  return n >= 0 ? "text-emerald-300" : "text-rose-300";
 }
 
 type Tone = "buy" | "neutral" | "sell";
@@ -112,17 +136,30 @@ function summarizeIndicators(closes: number[]) {
   };
 }
 
-/** 작은 숫자용 포맷 */
-function fmt(n: number | null | undefined, digits = 2) {
-  return typeof n === "number" && isFinite(n) ? n.toFixed(digits) : "—";
+/** 배열 뒤에서 k만큼 떨어진 값 pct 변화율 */
+function pctFromTail(arr: number[], k: number) {
+  if (!Array.isArray(arr) || arr.length <= k) return NaN;
+  const a = arr.at(-1)!;
+  const b = arr.at(-1 - k)!;
+  return isFinite(a) && isFinite(b) && b !== 0 ? ((a - b) / b) * 100 : NaN;
 }
 
 export default async function BTCPage() {
-  const btc = await getBTC(200); // 200일 확보
-  const closes: number[] = Array.isArray(btc?.prices) ? btc.prices.map((p: any[]) => p[1]) : [];
-  const last = closes.at(-1) ?? null;
+  // 데이터
+  const [btcDaily, btcHourly] = await Promise.all([getBTC(220), getBTCHourly(7)]);
+  const closesD: number[] = Array.isArray(btcDaily?.prices) ? btcDaily.prices.map((p: any[]) => p[1]) : [];
+  const closesH: number[] = Array.isArray(btcHourly?.prices) ? btcHourly.prices.map((p: any[]) => p[1]) : [];
+  const last = closesD.at(-1) ?? null;
 
-  const s = summarizeIndicators(closes);
+  // 지표 요약
+  const s = summarizeIndicators(closesD);
+
+  // 시간대별 변화율
+  const chg1h = pctFromTail(closesH, 1);
+  const chg4h = pctFromTail(closesH, 4);
+  const chg1d = pctFromTail(closesD, 1);
+  const chg1w = pctFromTail(closesD, 7);
+  const chg1m = pctFromTail(closesD, 30);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
@@ -144,6 +181,12 @@ export default async function BTCPage() {
         <div className="mt-3 text-sm text-brand-ink/80">
           현재가(스냅샷): {last ? usd(last) : "-"}
         </div>
+
+        {/* BTC는 시장 엔진 메시지 */}
+        <div className="mt-3 text-xs text-brand-ink/70">
+          <b>왜 중요?</b> 비트코인은 크립토 전체의 <b>유동성·심리의 엔진</b>입니다. BTC의 추세 전환은
+          알트코인 섹터의 <b>확대/위축</b>으로 파급되므로, BTC 방향성 파악이 먼저입니다.
+        </div>
       </div>
 
       {/* TradingView 메인 차트 */}
@@ -152,12 +195,56 @@ export default async function BTCPage() {
         <TvChart symbol="bitcoin" interval="D" height={480} />
       </section>
 
+      {/* 시간대별 변화율 (1h/4h/1d/1w/1m) */}
+      <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+        <div className="text-sm text-brand-ink/80 mb-3">시간대별 변화율</div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+          <div className="rounded-lg border border-brand-line/30 bg-brand-card/70 p-3">
+            <div className="text-xs text-brand-ink/70 mb-1">1h</div>
+            <div className={`font-semibold ${toneClass(chg1h)}`}>{pctTxt(chg1h)}</div>
+          </div>
+          <div className="rounded-lg border border-brand-line/30 bg-brand-card/70 p-3">
+            <div className="text-xs text-brand-ink/70 mb-1">4h</div>
+            <div className={`font-semibold ${toneClass(chg4h)}`}>{pctTxt(chg4h)}</div>
+          </div>
+          <div className="rounded-lg border border-brand-line/30 bg-brand-card/70 p-3">
+            <div className="text-xs text-brand-ink/70 mb-1">1d</div>
+            <div className={`font-semibold ${toneClass(chg1d)}`}>{pctTxt(chg1d)}</div>
+          </div>
+          <div className="rounded-lg border border-brand-line/30 bg-brand-card/70 p-3">
+            <div className="text-xs text-brand-ink/70 mb-1">1w</div>
+            <div className={`font-semibold ${toneClass(chg1w)}`}>{pctTxt(chg1w)}</div>
+          </div>
+          <div className="rounded-lg border border-brand-line/30 bg-brand-card/70 p-3">
+            <div className="text-xs text-brand-ink/70 mb-1">1m</div>
+            <div className={`font-semibold ${toneClass(chg1m)}`}>{pctTxt(chg1m)}</div>
+          </div>
+        </div>
+        <div className="mt-2 text-[11px] text-brand-ink/60">
+          ※ 1h/4h는 시간봉(최근 7일), 1d/1w/1m는 일봉 기반(근사치)입니다.
+        </div>
+      </section>
+
+      {/* 미니 프리뷰 차트 (4H, 1D) */}
+      <section className="grid md:grid-cols-2 gap-6">
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-sm text-brand-ink/80 mb-2">BTC 미니 차트 (4H)</div>
+          <TvMini tvSymbol="BINANCE:BTCUSDT" title="BTC (4H)" dateRange="4H" height={200} />
+        </div>
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+          <div className="text-sm text-brand-ink/80 mb-2">BTC 미니 차트 (1D)</div>
+          <TvMini tvSymbol="BINANCE:BTCUSDT" title="BTC (1D)" dateRange="1D" height={200} />
+        </div>
+      </section>
+
       {/* ① 지표 상세 카드: RSI / MACD / MA(50/200) */}
       <section className="grid md:grid-cols-3 gap-6">
         {/* RSI 카드 */}
         <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
           <div className="text-sm text-brand-ink/80 mb-1">RSI(14)</div>
-          <div className="text-2xl font-semibold text-brand-gold">{fmt(s.rsiLast, 0)}</div>
+          <div className="text-2xl font-semibold text-brand-gold">
+            {typeof s.rsiLast === "number" && isFinite(s.rsiLast) ? Math.round(s.rsiLast) : "—"}
+          </div>
           <div className="mt-2 text-xs text-brand-ink/70">
             {isFinite(s.rsiLast)
               ? s.rsiLast >= 70
@@ -176,8 +263,9 @@ export default async function BTCPage() {
             {s.macdCross === "bull" ? "골든 크로스" : s.macdCross === "bear" ? "데드 크로스" : "중립"}
           </div>
           <div className="mt-2 text-xs text-brand-ink/70">
-            히스토그램: <b className={isFinite(s.macdHistLast) && s.macdHistLast >= 0 ? "text-emerald-300" : "text-rose-300"}>
-              {isFinite(s.macdHistLast) ? fmt(s.macdHistLast, 3) : "—"}
+            히스토그램:{" "}
+            <b className={isFinite(s.macdHistLast) && s.macdHistLast >= 0 ? "text-emerald-300" : "text-rose-300"}>
+              {isFinite(s.macdHistLast) ? s.macdHistLast.toFixed(3) : "—"}
             </b>{" "}
             {isFinite(s.macdHistLast)
               ? s.macdHistLast > 0
@@ -202,7 +290,7 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* ② 리스크 관리 안내 / 면책 */}
+      {/* 리스크 관리 안내 / 면책 */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">리스크 관리 & 면책</div>
         <ul className="list-disc pl-5 text-xs leading-6 text-brand-ink/80">
@@ -212,7 +300,7 @@ export default async function BTCPage() {
         </ul>
       </section>
 
-      {/* ③ 프리미엄 신호 체험(CTA) */}
+      {/* 프리미엄 신호 체험(CTA) */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
