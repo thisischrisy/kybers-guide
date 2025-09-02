@@ -1,20 +1,30 @@
 // app/btc/page.tsx
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { AdSlot } from "@/components/AdSlot";
 import { Badge } from "@/components/Badge";
 import { Info } from "@/components/Info";
 import { rsi, macd, sma } from "@/lib/indicators";
 import { SIGNAL_EMOJI, SIGNAL_LABEL } from "@/lib/signal";
-import { getMarkets, type Market } from "@/lib/coingecko";
 
-export const revalidate = 600; // 10분 캐시
+export const revalidate = 1800; // 30분 캐시
 
-// 클라이언트 전용 위젯(차트/스파크라인)은 동적 임포트
+// TradingView 차트(클라이언트 전용)
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
-const MiniLine = dynamic(() => import("@/components/MiniLine").then(m => m.MiniLine), { ssr: false });
 
-// ---------- 유틸 ----------
+/** BTC 가격(일봉) */
+async function getBTC(days = 180) {
+  try {
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    return res.json(); // { prices: [ [ts, price], ...] }
+  } catch {
+    return null;
+  }
+}
+
 function usd(n: number | null | undefined) {
   if (typeof n !== "number" || !isFinite(n)) return "-";
   if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
@@ -22,56 +32,29 @@ function usd(n: number | null | undefined) {
   if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
   return `$${Math.round(n).toLocaleString()}`;
 }
-function pct(n: number | null | undefined) {
-  if (typeof n !== "number" || !isFinite(n)) return "—";
-  const sign = n > 0 ? "▲" : n < 0 ? "▼" : "";
-  return `${sign}${Math.abs(n).toFixed(2)}%`;
-}
-function takeEvery<T>(arr: T[], step: number) {
-  if (step <= 1) return arr.slice();
-  const out: T[] = [];
-  for (let i = Math.max(arr.length % step, 0); i < arr.length; i += step) {
-    out.push(arr[i]);
-  }
-  return out.length ? out : arr.slice(); // 최소 안전장치
-}
-function toWeeklyFromDaily(closes: number[]) {
-  // 7개씩 묶어 마지막 값 사용(대략 주봉)
-  const out: number[] = [];
-  for (let i = 6; i < closes.length; i += 7) out.push(closes[i]);
-  return out.length ? out : closes.slice();
-}
 
-// ---------- 데이터 ----------
-async function getBTCMarketChart(days: number, interval: "hourly" | "daily") {
-  try {
-    const r = await fetch(
-      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=${interval}`,
-      { cache: "no-store" }
-    );
-    if (!r.ok) return null;
-    return r.json() as Promise<{ prices: [number, number][] }>;
-  } catch {
-    return null;
-  }
-}
-
-// ---------- 신호 계산 ----------
 type Tone = "buy" | "neutral" | "sell";
-function toneByIndicators(closes: number[]) {
-  if (!Array.isArray(closes) || closes.length < 50) {
+
+/** 지표 종합 판단(MVP) */
+function summarizeIndicators(closes: number[]) {
+  if (!Array.isArray(closes) || closes.length < 200) {
     return {
       tone: "neutral" as Tone,
       rsiLast: NaN,
       macdCross: "none" as "bull" | "bear" | "none",
       maCross: "unknown" as "golden" | "dead" | "flat" | "unknown",
+      macdHistLast: NaN,
       summary: "데이터 수집 중 — 보수적 유지",
     };
   }
+
+  // RSI
   const rsiArr = rsi(closes, 14);
   const rsiLast = rsiArr.at(-1) ?? NaN;
 
+  // MACD
   const { macdLine, signalLine, hist } = macd(closes);
+  const macdHistLast = hist.at(-1) ?? NaN;
   const macdCross =
     macdLine.at(-2) != null &&
     signalLine.at(-2) != null &&
@@ -84,8 +67,11 @@ function toneByIndicators(closes: number[]) {
         : "none"
       : "none";
 
-  const ma50Last = sma(closes, 50).at(-1) ?? NaN;
-  const ma200Last = sma(closes, 200).at(-1) ?? NaN;
+  // MA(50/200)
+  const ma50 = sma(closes, 50);
+  const ma200 = sma(closes, 200);
+  const ma50Last = ma50.at(-1) ?? NaN;
+  const ma200Last = ma200.at(-1) ?? NaN;
   const maCross =
     isFinite(ma50Last) && isFinite(ma200Last)
       ? ma50Last > ma200Last
@@ -95,17 +81,7 @@ function toneByIndicators(closes: number[]) {
         : "flat"
       : "unknown";
 
-  const parts: string[] = [];
-  if (macdCross === "bull") parts.push("MACD 골든");
-  if (macdCross === "bear") parts.push("MACD 데드");
-  if (isFinite(rsiLast)) {
-    if (rsiLast >= 70) parts.push(`RSI ${Math.round(rsiLast)} 과열`);
-    else if (rsiLast <= 30) parts.push(`RSI ${Math.round(rsiLast)} 과매도`);
-    else parts.push(`RSI ${Math.round(rsiLast)}`);
-  }
-  if (maCross === "golden") parts.push("MA(50/200) 골든");
-  if (maCross === "dead") parts.push("MA(50/200) 데드");
-
+  // 톤 결정
   const tone: Tone =
     macdCross === "bull" || maCross === "golden"
       ? "buy"
@@ -113,147 +89,151 @@ function toneByIndicators(closes: number[]) {
       ? "sell"
       : "neutral";
 
+  // 사람이 읽는 문구
+  const parts: string[] = [];
+  if (macdCross === "bull") parts.push("MACD 골든");
+  if (macdCross === "bear") parts.push("MACD 데드");
+  if (isFinite(rsiLast))
+    parts.push(
+      rsiLast >= 70 ? `RSI ${Math.round(rsiLast)} 과열` :
+      rsiLast <= 30 ? `RSI ${Math.round(rsiLast)} 과매도` :
+      `RSI ${Math.round(rsiLast)}`
+    );
+  if (maCross === "golden") parts.push("MA(50/200) 골든");
+  if (maCross === "dead") parts.push("MA(50/200) 데드");
+
   return {
     tone,
     rsiLast,
     macdCross,
     maCross,
+    macdHistLast,
     summary: parts.length ? parts.join(", ") : "지표 중립 — 방향성 모색",
   };
 }
 
+/** 작은 숫자용 포맷 */
+function fmt(n: number | null | undefined, digits = 2) {
+  return typeof n === "number" && isFinite(n) ? n.toFixed(digits) : "—";
+}
+
 export default async function BTCPage() {
-  // 1) 마켓/가격 요약
-  const [markets, d180, h3, h14, d1500] = await Promise.all([
-    getMarkets(50),                 // 요약 KPI(24h/7d/30d)
-    getBTCMarketChart(180, "daily"),// 1D 신호용/미니라인용
-    getBTCMarketChart(3, "hourly"), // 1H 신호용 (시간봉)
-    getBTCMarketChart(14, "hourly"),// 4H 신호용 (시간봉 다운샘플)
-    getBTCMarketChart(1500, "daily")// 1W 신호용 (일봉→주봉 변환)
-  ]);
+  const btc = await getBTC(200); // 200일 확보
+  const closes: number[] = Array.isArray(btc?.prices) ? btc.prices.map((p: any[]) => p[1]) : [];
+  const last = closes.at(-1) ?? null;
 
-  const btcRow: Market | undefined = Array.isArray(markets)
-    ? markets.find((m: Market) => m.id === "bitcoin")
-    : undefined;
-
-  const priceNow = btcRow?.current_price ?? NaN;
-  const ch24 = btcRow?.price_change_percentage_24h ?? NaN;
-  const ch7d = (btcRow as any)?.price_change_percentage_7d_in_currency ?? NaN;
-  const ch30d = (btcRow as any)?.price_change_percentage_30d_in_currency ?? NaN;
-
-  // 2) 타임프레임별 신호 산출
-  const close1H = Array.isArray(h3?.prices) ? h3!.prices.map(p => p[1]) : [];
-  const close4H_hourly = Array.isArray(h14?.prices) ? h14!.prices.map(p => p[1]) : [];
-  const close4H = takeEvery(close4H_hourly, 4); // 4시간봉 대용
-
-  const close1D = Array.isArray(d180?.prices) ? d180!.prices.map(p => p[1]) : [];
-  const close1W = Array.isArray(d1500?.prices) ? toWeeklyFromDaily(d1500!.prices.map(p => p[1])) : [];
-
-  const sig1H = toneByIndicators(close1H);
-  const sig4H = toneByIndicators(close4H);
-  const sig1D = toneByIndicators(close1D);
-  const sig1W = toneByIndicators(close1W);
-
-  // 3) 페이지 상단 종합 톤(대표)
-  const headlineTone: Tone =
-    sig1D.tone === "buy" || sig1W.tone === "buy"
-      ? "buy"
-      : sig1D.tone === "sell" && sig1W.tone === "sell"
-      ? "sell"
-      : "neutral";
-
-  // 미니라인 데이터(최근 90일)
-  const miniLabels = close1D.slice(-90).map((_, i) => `${i}`);
-  const miniValues = close1D.slice(-90);
+  const s = summarizeIndicators(closes);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 space-y-6">
-      <h2 className="text-xl font-semibold">비트코인 분석</h2>
+    <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
+      <h2 className="text-xl font-semibold">비트코인 — 단·중·장기 신호</h2>
 
-      {/* Hero 섹션: 신호 배지 + KPI + 차트 */}
-      <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6 space-y-4">
-        {/* 대표 신호 */}
-        <div className="flex items-center gap-2 text-sm">
-          <Badge tone={headlineTone}>
-            {SIGNAL_EMOJI[headlineTone]} {SIGNAL_LABEL[headlineTone]}
+      {/* 상단 톤 배지 + 요약 */}
+      <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
+        <div className="flex flex-wrap items-center gap-2 text-sm mb-2">
+          <Badge tone={s.tone}>
+            {SIGNAL_EMOJI[s.tone]} {SIGNAL_LABEL[s.tone]}
           </Badge>
-          <span className="text-brand-ink/70">
-            {sig1D.summary} · {sig1W.summary}
-          </span>
+          <span className="text-brand-ink/70">{s.summary}</span>
         </div>
-
-        {/* KPI */}
-        <div className="text-sm text-brand-ink/80 flex flex-wrap gap-x-6 gap-y-1">
-          <div>가격: <b>{isFinite(priceNow) ? usd(priceNow) : "-"}</b></div>
-          <div>24h: <b className={isFinite(ch24) && ch24 >= 0 ? "text-emerald-300" : "text-rose-300"}>{pct(ch24)}</b></div>
-          <div>7d: <b className={isFinite(ch7d) && ch7d >= 0 ? "text-emerald-300" : "text-rose-300"}>{pct(ch7d)}</b></div>
-          <div>30d: <b className={isFinite(ch30d) && ch30d >= 0 ? "text-emerald-300" : "text-rose-300"}>{pct(ch30d)}</b></div>
-        </div>
-
-        {/* TV 차트 */}
-        <div className="mt-2">
-          <TvChart symbol="bitcoin" interval="D" height={420} />
-        </div>
-
-        {/* 지표 가이드 */}
-        <div className="text-xs text-brand-ink/70 flex gap-3 mt-2">
+        <div className="text-xs text-brand-ink/70 flex gap-3 flex-wrap">
           <Info label="RSI" tip="70 이상 과열, 30 이하 과매도" />
           <Info label="MACD" tip="MACD선이 시그널선 돌파 시 모멘텀 전환" />
-          <Info label="MA(50/200)" tip="장기 추세 골든/데드 크로스" />
+          <Info label="MA(50/200)" tip="50일선이 200일선 상향 돌파 시 골든, 하향 시 데드" />
+        </div>
+        <div className="mt-3 text-sm text-brand-ink/80">
+          현재가(스냅샷): {last ? usd(last) : "-"}
         </div>
       </div>
 
-      {/* 타임프레임 신호 요약 */}
-      <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
-        <div className="text-sm text-brand-ink/80 mb-3">타임프레임 신호 요약</div>
-        <div className="flex flex-wrap gap-2 text-sm">
-          {[
-            { k: "1H", s: sig1H },
-            { k: "4H", s: sig4H },
-            { k: "1D", s: sig1D },
-            { k: "1W", s: sig1W },
-          ].map(({ k, s }) => (
-            <span key={k} title={s.summary}>
-              <Badge tone={s.tone}>
-                <span className="mr-1 opacity-80">{k}</span>
-                {SIGNAL_EMOJI[s.tone]} {SIGNAL_LABEL[s.tone]}
-              </Badge>
-            </span>
-          ))}
-        </div>
-        <div className="mt-3 text-xs text-brand-ink/60">
-          ※ 4H/1W 신호는 시간봉/일봉 데이터를 간략 변환해 산출한 <b>MVP 근사치</b>입니다.
-        </div>
-      </div>
+      {/* TradingView 메인 차트 */}
+      <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
+        <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
+        <TvChart symbol="bitcoin" interval="D" height={480} />
+      </section>
 
-      {/* 지표 상세(간단) + 미니라인 */}
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* 미니라인: 최근 90일 종가 */}
-        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
-          <div className="text-sm text-brand-ink/80 mb-2">BTC 스파크라인 (최근 90일)</div>
-          {miniValues.length ? (
-            <MiniLine labels={miniLabels} values={miniValues} />
-          ) : (
-            <div className="text-sm text-brand-ink/60">데이터 수집 중…</div>
-          )}
-        </div>
-
-        {/* RSI/MACD/MA 현황 텍스트 */}
-        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
-          <div className="text-sm text-brand-ink/80 mb-2">지표 요약 (1D 기준)</div>
-          <ul className="text-sm leading-6 text-brand-ink/80 list-disc pl-5">
-            <li>{sig1D.summary}</li>
-            <li>주봉 관점: {sig1W.summary}</li>
-            <li>단기(1H/4H): {sig1H.summary} · {sig4H.summary}</li>
-          </ul>
-          <div className="mt-2 text-xs text-brand-ink/60">
-            ※ 상세 지표 차트(MACD 히스토그램/RSI 라인)는 추후 카드형으로 확장 예정.
+      {/* ① 지표 상세 카드: RSI / MACD / MA(50/200) */}
+      <section className="grid md:grid-cols-3 gap-6">
+        {/* RSI 카드 */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          <div className="text-sm text-brand-ink/80 mb-1">RSI(14)</div>
+          <div className="text-2xl font-semibold text-brand-gold">{fmt(s.rsiLast, 0)}</div>
+          <div className="mt-2 text-xs text-brand-ink/70">
+            {isFinite(s.rsiLast)
+              ? s.rsiLast >= 70
+                ? "과열 구간 — 단기 과열, 변동성 유의"
+                : s.rsiLast <= 30
+                ? "과매도 구간 — 반등 가능성 주시"
+                : "중립 구간 — 방향성 모색"
+              : "지표 수집 중"}
           </div>
         </div>
-      </div>
 
-      {/* 광고(유지) */}
-      <AdSlot id="btc-mid" />
+        {/* MACD 카드 */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          <div className="text-sm text-brand-ink/80 mb-1">MACD</div>
+          <div className="text-2xl font-semibold text-brand-gold">
+            {s.macdCross === "bull" ? "골든 크로스" : s.macdCross === "bear" ? "데드 크로스" : "중립"}
+          </div>
+          <div className="mt-2 text-xs text-brand-ink/70">
+            히스토그램: <b className={isFinite(s.macdHistLast) && s.macdHistLast >= 0 ? "text-emerald-300" : "text-rose-300"}>
+              {isFinite(s.macdHistLast) ? fmt(s.macdHistLast, 3) : "—"}
+            </b>{" "}
+            {isFinite(s.macdHistLast)
+              ? s.macdHistLast > 0
+                ? "(상방 모멘텀)"
+                : s.macdHistLast < 0
+                ? "(하방 모멘텀)"
+                : "(중립)"
+              : ""}
+          </div>
+        </div>
+
+        {/* MA(50/200) 카드 */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          <div className="text-sm text-brand-ink/80 mb-1">이동평균 (50 / 200)</div>
+          <div className="text-2xl font-semibold text-brand-gold">
+            {s.maCross === "golden" ? "골든 크로스" : s.maCross === "dead" ? "데드 크로스" : "중립"}
+          </div>
+          <div className="mt-2 text-xs text-brand-ink/70">
+            장기 추세 판단: 50일선이 200일선 위면 <b className="text-emerald-300">상승 추세</b>, 아래면{" "}
+            <b className="text-rose-300">하락 추세</b> 경향.
+          </div>
+        </div>
+      </section>
+
+      {/* ② 리스크 관리 안내 / 면책 */}
+      <section className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">
+        <div className="text-sm text-brand-ink/80 mb-2">리스크 관리 & 면책</div>
+        <ul className="list-disc pl-5 text-xs leading-6 text-brand-ink/80">
+          <li>본 페이지의 신호는 <b>투자 자문이 아닌 참고용</b>입니다.</li>
+          <li>단기 변동성 구간에선 손절/분할매수 등 <b>리스크 관리</b>를 전제로 접근하세요.</li>
+          <li>데이터 소스(API) 지연·누락 시 신호가 지연될 수 있습니다.</li>
+        </ul>
+      </section>
+
+      {/* ③ 프리미엄 신호 체험(CTA) */}
+      <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-sm text-brand-ink/80 mb-1">프리미엄 신호 체험</div>
+            <div className="text-base text-brand-ink/90">
+              단·중·장기 통합 점수, 섹터 상대강도, 리스크 지표까지 한 번에. 베타 기간 무료 체험.
+            </div>
+            <ul className="mt-2 text-xs text-brand-ink/70 list-disc pl-5">
+              <li>프리미엄 룰 기반 종합 점수(가중 다수결, 추세 가점)</li>
+              <li>알트 섹터 상대강도(24h/7d)</li>
+              <li>변동성/거래대금 스크리너</li>
+            </ul>
+          </div>
+          <Link
+            href="/premium"
+            className="rounded-lg border border-brand-gold/60 text-brand-gold px-4 py-2 hover:bg-brand-gold/10 transition"
+          >
+            프리미엄 보러가기 →
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }
