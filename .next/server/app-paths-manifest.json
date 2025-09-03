@@ -1,8 +1,6 @@
 {
+  "/_not-found/page": "app/_not-found/page.js",
   "/page": "app/page.js",
-  "/api/btc/market-chart/route": "app/api/btc/market-chart/route.js",
-  "/api/stables/route": "app/api/stables/route.js",
-  "/overview/page": "app/overview/page.js",
-  "/altcoin/page": "app/altcoin/page.js",
-  "/btc/page": "app/btc/page.js"
+  "/btc/page": "app/btc/page.js",
+  "/overview/page": "app/overview/page.js"
 }
