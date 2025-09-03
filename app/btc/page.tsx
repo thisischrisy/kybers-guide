@@ -1,21 +1,39 @@
 // app/btc/page.tsx
-import dynamic from "next/dynamic";
+import NextDynamic from "next/dynamic"; // ← 별칭으로 임포트 (중요)
 import Link from "next/link";
+import { headers } from "next/headers";
 import { Info } from "@/components/Info";
 import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
-import { headers } from "next/headers";
 
-export const revalidate = 300; // 5분 캐시
+// ✅ 내부 API 절대 URL 호출을 위해 동적 렌더링 강제
+export const dynamic = "force-dynamic";      // ← 페이지 설정용 예약 export
+export const fetchCache = "force-no-store";  // (옵션) 캐시 무효화
 
-const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
+const TvChart = NextDynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-/** 내부 API 경유: BTC 일봉 (기본 450일 — 400MA 계산용) */
-async function fetchBtcDaily(days = 450) {
+/** 절대 URL 헬퍼 */
+function getBaseUrl() {
+  const envSite = process.env.NEXT_PUBLIC_SITE_URL; // ex) https://yourdomain.com
+  if (envSite) return envSite.replace(/\/$/, "");
+
+  const h = headers();
+  const host =
+    h.get("x-forwarded-host") ??
+    h.get("host") ??
+    process.env.VERCEL_URL ??
+    "localhost:3000";
+
+  const proto =
+    h.get("x-forwarded-proto") ??
+    (process.env.VERCEL ? "https" : "http");
+
+  return `${proto}://${host}`;
+}
+
+/** 내부 API: BTC 일봉 (기본 450일 — 400MA 계산용) */
+async function apiGetBtcDaily(days = 450) {
   try {
-    const h = headers();
-    const proto = h.get("x-forwarded-proto") ?? "http";
-    const host = h.get("host") ?? "localhost:3000";
-    const base = `${proto}://${host}`;
+    const base = getBaseUrl();
     const r = await fetch(`${base}/api/btc/daily?days=${days}`, { cache: "no-store" });
     if (!r.ok) return null;
     return r.json(); // { prices: [[ts, price], ...] }
@@ -24,13 +42,10 @@ async function fetchBtcDaily(days = 450) {
   }
 }
 
-/** 내부 API 경유: BTC 시간봉 (기본 60일 — 4H/1H 산출용) */
-async function fetchBtcHourly(days = 60) {
+/** 내부 API: BTC 시간봉 (기본 60일 — 4H/1H 산출용) */
+async function apiGetBtcHourly(days = 60) {
   try {
-    const h = headers();
-    const proto = h.get("x-forwarded-proto") ?? "http";
-    const host = h.get("host") ?? "localhost:3000";
-    const base = `${proto}://${host}`;
+    const base = getBaseUrl();
     const r = await fetch(`${base}/api/btc/hourly?days=${days}`, { cache: "no-store" });
     if (!r.ok) return null;
     return r.json(); // { prices: [[ts, price], ...] }
@@ -40,22 +55,20 @@ async function fetchBtcHourly(days = 60) {
 }
 
 /** 안전 파서: {prices: [[ts, price], ...]} -> number[] (close들) */
-function pickCloses(json: any): number[] {
-  if (!Array.isArray(json?.prices)) return [];
-  return (json.prices as unknown[])
-    .map((p: unknown): number => {
-      if (Array.isArray(p) && p.length >= 2) {
-        const v = Number((p as [unknown, unknown])[1]);
+function pickCloses(json: unknown): number[] {
+  const arr = (json as any)?.prices;
+  if (!Array.isArray(arr)) return [];
+  return (arr as unknown[])
+    .map((row: unknown) => {
+      if (Array.isArray(row) && row.length >= 2) {
+        const v = Number((row as [unknown, unknown])[1]);
         return Number.isFinite(v) ? v : NaN;
       }
       return NaN;
     })
-    .filter((v: number): v is number => Number.isFinite(v));
+    .filter((v): v is number => Number.isFinite(v));
 }
 
-function last<T>(arr: T[]): T | undefined {
-  return arr.length ? arr[arr.length - 1] : undefined;
-}
 function toneColor(t: Tone) {
   return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-brand-ink/80";
 }
@@ -68,18 +81,18 @@ function pill(t: Tone) {
 }
 
 export default async function BTCPage() {
-  // 1) 가져오기
+  // 1) 데이터 가져오기 (절대 URL 사용)
   const [dailyJson, hourlyJson] = await Promise.all([
-    fetchBtcDaily(450),
-    fetchBtcHourly(60),
+    apiGetBtcDaily(450),
+    apiGetBtcHourly(60),
   ]);
 
-  // 2) 종가 배열 뽑기
+  // 2) 종가 배열 파싱
   const closesD: number[] = pickCloses(dailyJson);
   const closesH: number[] = pickCloses(hourlyJson);
 
-  // 3) 4시간봉으로 집계
-  const closes4H = to4hCloses(closesH);
+  // 3) 4시간봉 집계
+  const closes4H: number[] = to4hCloses(closesH);
 
   // 4) 신호 계산
   const eval1h = decideSignalForSeries("1h", closesH);
@@ -89,7 +102,7 @@ export default async function BTCPage() {
   // 5) 마스터 종합
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  // 6) 스냅샷용 현재가
+  // 6) 현재가(스냅샷)
   const lastD = closesD.length ? closesD[closesD.length - 1] : null;
 
   return (
@@ -111,16 +124,12 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* 디버그 뱃지 (임시) */}
+      {/* 디버그(임시) */}
       <div className="text-[11px] text-brand-ink/50">
-        daily:{closesD.length} · hourly:{closesH.length} · 4h:{closes4H.length}
-      </div>
-      <div className="text-[11px] text-brand-ink/50">
-        dailyJson:{dailyJson ? "ok" : "null"} · hourlyJson:{hourlyJson ? "ok" : "null"} ·
-        D:{closesD.length} · H:{closesH.length} · 4H:{closes4H.length}
+        dailyJson:{dailyJson ? "ok" : "null"} · hourlyJson:{hourlyJson ? "ok" : "null"} · D:{closesD.length} · H:{closesH.length} · 4H:{closes4H.length}
       </div>
 
-      {/* 2) 관점별 카드 (가이드 문구 포함) */}
+      {/* 2) 관점별 카드 */}
       <section className="grid md:grid-cols-3 gap-6">
         {[eval1h, eval4h, eval1d].map((s) => (
           <div key={s.tf} className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
@@ -132,8 +141,6 @@ export default async function BTCPage() {
                 {s.tone === "buy" ? "매수" : s.tone === "sell" ? "매도" : "중립"}
               </span>
             </div>
-
-            {/* 투자 관점 가이드 */}
             <div className="text-[11px] text-brand-ink/60 mb-2">
               {s.tf === "1h" ? "24시간 이하 투자 관점" : s.tf === "4h" ? "1주일 미만 투자 관점" : "긴 호흡의 투자 관점"}
             </div>
@@ -142,30 +149,14 @@ export default async function BTCPage() {
             <div className="mt-2 text-sm text-brand-ink/90">{s.status}</div>
             <div className="mt-2 text-xs text-brand-ink/70">
               50/400 교차:{" "}
-              <b
-                className={
-                  s.cross50400 === "golden"
-                    ? "text-emerald-300"
-                    : s.cross50400 === "dead"
-                    ? "text-rose-300"
-                    : "text-brand-ink/80"
-                }
-              >
+              <b className={s.cross50400 === "golden" ? "text-emerald-300" : s.cross50400 === "dead" ? "text-rose-300" : "text-brand-ink/80"}>
                 {s.cross50400 === "golden" ? "골든" : s.cross50400 === "dead" ? "데드" : "없음"}
               </b>
               {s._fallback && " (400MA 미충족: 50/200 기준 대체)"}
             </div>
             <div className="mt-1 text-xs text-brand-ink/70">
               RSI(14):{" "}
-              <b
-                className={
-                  s.rsiWarn === "탐욕 과열"
-                    ? "text-rose-300"
-                    : s.rsiWarn === "공포 과도"
-                    ? "text-emerald-300"
-                    : "text-brand-ink/80"
-                }
-              >
+              <b className={s.rsiWarn === "탐욕 과열" ? "text-rose-300" : s.rsiWarn === "공포 과도" ? "text-emerald-300" : "text-brand-ink/80"}>
                 {s.rsi != null ? Math.round(s.rsi) : "—"} ({s.rsiWarn})
               </b>
             </div>
@@ -178,8 +169,7 @@ export default async function BTCPage() {
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
         <TvChart symbol="bitcoin" interval="D" height={480} />
         <div className="mt-3 text-sm text-brand-ink/80">
-          현재가(스냅샷):{" "}
-          {typeof lastD === "number" && Number.isFinite(lastD) ? `$${Math.round(lastD).toLocaleString()}` : "—"}
+          현재가(스냅샷): {typeof lastD === "number" && Number.isFinite(lastD) ? `$${Math.round(lastD).toLocaleString()}` : "—"}
         </div>
         <div className="mt-2 text-[11px] text-brand-ink/60">
           ※ 50/200/400 MA 및 RSI 오버레이는 다음 단계에서 위젯에 표시 예정(현재는 신호 카드로 제공).
