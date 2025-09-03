@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Info } from "@/components/Info";
 import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
+import { headers } from "next/headers";
 
 export const revalidate = 300; // 5분 캐시
 
@@ -11,7 +12,11 @@ const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart
 /** 내부 API 경유: BTC 일봉 (기본 450일 — 400MA 계산용) */
 async function fetchBtcDaily(days = 450) {
   try {
-    const r = await fetch(`/api/btc/daily?days=${days}`, { cache: "no-store" });
+    const h = headers();
+    const proto = h.get("x-forwarded-proto") ?? "http";
+    const host = h.get("host") ?? "localhost:3000";
+    const base = `${proto}://${host}`;
+    const r = await fetch(`${base}/api/btc/daily?days=${days}`, { cache: "no-store" });
     if (!r.ok) return null;
     return r.json(); // { prices: [[ts, price], ...] }
   } catch {
@@ -19,24 +24,19 @@ async function fetchBtcDaily(days = 450) {
   }
 }
 
-/** 내부 API 경유: BTC 시간봉 (기본 60일) — 1h/4h 산출용
- *  1차: /api/btc/hourly
- *  2차(우회): /api/btc/market-chart?interval=hourly (예전 라우트)
- */
+/** 내부 API 경유: BTC 시간봉 (기본 60일 — 4H/1H 산출용) */
 async function fetchBtcHourly(days = 60) {
-  // 1차
   try {
-    const r1 = await fetch(`/api/btc/hourly?days=${days}`, { cache: "no-store" });
-    if (r1.ok) return r1.json();
-  } catch {}
-  // 2차 우회
-  try {
-    const r2 = await fetch(`/api/btc/market-chart?days=${Math.min(days, 30)}&interval=hourly&id=bitcoin`, {
-      cache: "no-store",
-    });
-    if (r2.ok) return r2.json();
-  } catch {}
-  return null;
+    const h = headers();
+    const proto = h.get("x-forwarded-proto") ?? "http";
+    const host = h.get("host") ?? "localhost:3000";
+    const base = `${proto}://${host}`;
+    const r = await fetch(`${base}/api/btc/hourly?days=${days}`, { cache: "no-store" });
+    if (!r.ok) return null;
+    return r.json(); // { prices: [[ts, price], ...] }
+  } catch {
+    return null;
+  }
 }
 
 /** 안전 파서: {prices: [[ts, price], ...]} -> number[] (close들) */
@@ -70,8 +70,8 @@ function pill(t: Tone) {
 export default async function BTCPage() {
   // 1) 가져오기
   const [dailyJson, hourlyJson] = await Promise.all([
-    fetchBtcDaily(450),   // 400MA까지 계산하려면 충분
-    fetchBtcHourly(60),   // 4H/1H 산출 충분
+    fetchBtcDaily(450),
+    fetchBtcHourly(60),
   ]);
 
   // 2) 종가 배열 뽑기
@@ -114,6 +114,10 @@ export default async function BTCPage() {
       {/* 디버그 뱃지 (임시) */}
       <div className="text-[11px] text-brand-ink/50">
         daily:{closesD.length} · hourly:{closesH.length} · 4h:{closes4H.length}
+      </div>
+      <div className="text-[11px] text-brand-ink/50">
+        dailyJson:{dailyJson ? "ok" : "null"} · hourlyJson:{hourlyJson ? "ok" : "null"} ·
+        D:{closesD.length} · H:{closesH.length} · 4H:{closes4H.length}
       </div>
 
       {/* 2) 관점별 카드 (가이드 문구 포함) */}
