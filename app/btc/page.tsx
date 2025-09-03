@@ -1,30 +1,31 @@
 // app/btc/page.tsx
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Badge } from "@/components/Badge";
 import { Info } from "@/components/Info";
 import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
 
-export const revalidate = 900;
+export const revalidate = 300; // 5분 캐시로 속도 개선
 
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-async function getBTCDaily(days = 500) {
+// Coingecko 일봉: 450일이면 400MA 판단 가능
+async function getBTCDaily(days = 450) {
   try {
     const r = await fetch(
       `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`,
-      { cache: "no-store" }
+      { next: { revalidate: 300 } }
     );
     if (!r.ok) return null;
     return r.json();
   } catch { return null; }
 }
 
-async function getBTCHourly(days = 120) {
+// Coingecko 시간봉: 60일(≈1440시간) → 4시간변환도 충분
+async function getBTCHourly(days = 60) {
   try {
     const r = await fetch(
       `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=hourly`,
-      { cache: "no-store" }
+      { next: { revalidate: 300 } }
     );
     if (!r.ok) return null;
     return r.json();
@@ -35,21 +36,26 @@ function last<T>(arr: T[]): T | undefined { return arr.length ? arr[arr.length -
 function toneColor(t: Tone) {
   return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-brand-ink/80";
 }
+function pill(t: Tone) {
+  return t === "buy"
+    ? "bg-emerald-600/20 text-emerald-300 border border-emerald-400/40"
+    : t === "sell"
+    ? "bg-rose-600/20 text-rose-300 border border-rose-400/40"
+    : "bg-yellow-600/20 text-yellow-300 border border-yellow-400/30";
+}
 
 export default async function BTCPage() {
-  const [daily, hourly] = await Promise.all([getBTCDaily(500), getBTCHourly(120)]);
+  const [daily, hourly] = await Promise.all([getBTCDaily(450), getBTCHourly(60)]);
   const closesD: number[] = Array.isArray(daily?.prices) ? daily.prices.map((p: any[]) => p[1]) : [];
   const closesH: number[] = Array.isArray(hourly?.prices) ? hourly.prices.map((p: any[]) => p[1]) : [];
   const closes4H = to4hCloses(closesH);
 
-  // 각 타임프레임 신호 (lib/signals 사용)
+  // 신호 계산(부족하면 자동 fallback → 항상 결과 제공)
   const eval1h = decideSignalForSeries("1h", closesH);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
-
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  // 일봉 스냅샷 (가격만 표시)
   const lastD = last(closesD) ?? null;
 
   return (
@@ -66,18 +72,32 @@ export default async function BTCPage() {
         </div>
         <div className="mt-3 text-xs text-brand-ink/70 flex gap-3 flex-wrap">
           <Info label="기준" tip="MA(50/200/400) + RSI(14), 50/400 교차는 최우선" />
-          <Info label="우선순위" tip="단순 다수결, 동률은 장기(1d) 우선" />
+          <Info label="우선순위" tip="다수결, 동률 시 장기(1d) 우선" />
           <Info label="왜 BTC?" tip="BTC는 크립토 유동성·심리의 엔진. 방향 전환=알트 확장/위축" />
         </div>
       </section>
 
-      {/* 2) 관점별 카드 */}
+      {/* 2) 관점별 카드 (가이드 문구 포함) */}
       <section className="grid md:grid-cols-3 gap-6">
         {[eval1h, eval4h, eval1d].map(s => (
           <div key={s.tf} className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
-            <div className="text-sm text-brand-ink/80 mb-1">
-              {s.tf === "1h" ? "단기 (1h)" : s.tf === "4h" ? "중기 (4h)" : "장기 (1d)"}
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-sm text-brand-ink/80">
+                {s.tf === "1h" ? "단기 (1h)" : s.tf === "4h" ? "중기 (4h)" : "장기 (1d)"}
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-xs ${pill(s.tone)}`}>
+                {s.tone === "buy" ? "매수" : s.tone === "sell" ? "매도" : "중립"}
+              </span>
             </div>
+            {/* 투자 관점 가이드 */}
+            <div className="text-[11px] text-brand-ink/60 mb-2">
+              {s.tf === "1h"
+                ? "24시간 이하 투자 관점"
+                : s.tf === "4h"
+                ? "1주일 미만 투자 관점"
+                : "긴 호흡의 투자 관점"}
+            </div>
+
             <div className={`text-xl font-semibold ${toneColor(s.tone)}`}>{s.recommendation}</div>
             <div className="mt-2 text-sm text-brand-ink/90">{s.status}</div>
             <div className="mt-2 text-xs text-brand-ink/70">
@@ -88,6 +108,7 @@ export default async function BTCPage() {
               }>
                 {s.cross50400 === "golden" ? "골든" : s.cross50400 === "dead" ? "데드" : "없음"}
               </b>
+              {s._fallback && " (400MA 미충족: 50/200 기준 대체)"}
             </div>
             <div className="mt-1 text-xs text-brand-ink/70">
               RSI(14):{" "}
@@ -103,7 +124,7 @@ export default async function BTCPage() {
         ))}
       </section>
 
-      {/* 3) 차트 (오버레이는 다음 단계에서) */}
+      {/* 3) 메인 차트 (오버레이는 다음 단계에서) */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
         <TvChart symbol="bitcoin" interval="D" height={480} />
@@ -115,7 +136,7 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* 리스크 & CTA는 기존 그대로 유지하셔도 됩니다 */}
+      {/* 리스크 안내 & CTA */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">리스크 관리 & 면책</div>
         <ul className="list-disc pl-5 text-xs leading-6 text-brand-ink/80">
