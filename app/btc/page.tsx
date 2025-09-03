@@ -56,7 +56,7 @@ function pill(t: Tone) {
 export default async function BTCPage() {
   const [btcDaily, btcHourly] = await Promise.all([
     fetchBtcDaily(450),   // 400MA 계산 여유
-    fetchBtcHourly(60),   // 4H/1H 산출 충분
+    fetchBtcHourly(30),   // 4H/1H 산출 충분
   ]);
 
   const closesD: number[] = pickCloses(btcDaily);
