@@ -8,28 +8,38 @@ export const revalidate = 300; // 5분 캐시로 속도 개선
 
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-// Coingecko 일봉: 450일이면 400MA 판단 가능
+// 내부 API 경유: 일봉 450일 (400MA 판단용)
 async function getBTCDaily(days = 450) {
   try {
-    const r = await fetch(
-      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`,
-      { next: { revalidate: 300 } }
-    );
+    const r = await fetch(`/api/btc/market-chart?days=${days}&interval=daily&id=bitcoin`, {
+      next: { revalidate: 300 },
+    });
     if (!r.ok) return null;
-    return r.json();
-  } catch { return null; }
+    return r.json(); // { prices: [[ts, price], ...] }
+  } catch {
+    return null;
+  }
 }
 
-// Coingecko 시간봉: 60일(≈1440시간) → 4시간변환도 충분
+// 내부 API 경유: 시간봉 60일 (4H 변환 충분)
 async function getBTCHourly(days = 60) {
   try {
-    const r = await fetch(
-      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=hourly`,
-      { next: { revalidate: 300 } }
-    );
+    const r = await fetch(`/api/btc/market-chart?days=${days}&interval=hourly&id=bitcoin`, {
+      next: { revalidate: 300 },
+    });
     if (!r.ok) return null;
-    return r.json();
-  } catch { return null; }
+    return r.json(); // { prices: [[ts, price], ...] }
+  } catch {
+    return null;
+  }
+}
+
+// 안전 파서
+function pickCloses(json: any): number[] {
+  if (!Array.isArray(json?.prices)) return [];
+  return json.prices
+    .map((p: unknown) => (Array.isArray(p) ? Number(p[1]) : NaN))
+    .filter((n: number): n is number => isFinite(n)); // 타입가드
 }
 
 function last<T>(arr: T[]): T | undefined { return arr.length ? arr[arr.length - 1] : undefined; }
@@ -46,8 +56,11 @@ function pill(t: Tone) {
 
 export default async function BTCPage() {
   const [daily, hourly] = await Promise.all([getBTCDaily(450), getBTCHourly(60)]);
-  const closesD: number[] = Array.isArray(daily?.prices) ? daily.prices.map((p: any[]) => p[1]) : [];
-  const closesH: number[] = Array.isArray(hourly?.prices) ? hourly.prices.map((p: any[]) => p[1]) : [];
+  //const closesD: number[] = Array.isArray(daily?.prices) ? daily.prices.map((p: any[]) => p[1]) : [];
+  //const closesH: number[] = Array.isArray(hourly?.prices) ? hourly.prices.map((p: any[]) => p[1]) : [];
+  // 교체
+  const closesD: number[] = pickCloses(daily);
+  const closesH: number[] = pickCloses(hourly);
   const closes4H = to4hCloses(closesH);
 
   // 신호 계산(부족하면 자동 fallback → 항상 결과 제공)
@@ -76,6 +89,11 @@ export default async function BTCPage() {
           <Info label="왜 BTC?" tip="BTC는 크립토 유동성·심리의 엔진. 방향 전환=알트 확장/위축" />
         </div>
       </section>
+
+      {/* 데이터 상태 표시 (선택) */}
+      <div className="mt-2 text-[11px] text-brand-ink/60">
+        일봉:{closesD.length} / 시간봉:{closesH.length} (빈 값이면 데이터 소스 지연 가능)
+      </div>
 
       {/* 2) 관점별 카드 (가이드 문구 포함) */}
       <section className="grid md:grid-cols-3 gap-6">
