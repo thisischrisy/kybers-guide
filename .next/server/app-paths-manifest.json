@@ -1,1 +1,6 @@
-{}
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/page": "app/page.js",
+  "/altcoin/page": "app/altcoin/page.js",
+  "/btc/page": "app/btc/page.js"
+}

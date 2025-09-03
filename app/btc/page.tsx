@@ -68,20 +68,29 @@ function pill(t: Tone) {
 }
 
 export default async function BTCPage() {
-  // ✅ 변수명 통일: btcDaily / btcHourly 만 사용
-  const [btcDaily, btcHourly] = await Promise.all([fetchBtcDaily(450), fetchBtcHourly(60)]);
+  // 1) 가져오기
+  const [dailyJson, hourlyJson] = await Promise.all([
+    fetchBtcDaily(450),   // 400MA까지 계산하려면 충분
+    fetchBtcHourly(60),   // 4H/1H 산출 충분
+  ]);
 
-  const closesD: number[] = pickCloses(btcDaily);
-  const closesH: number[] = pickCloses(btcHourly);
+  // 2) 종가 배열 뽑기
+  const closesD: number[] = pickCloses(dailyJson);
+  const closesH: number[] = pickCloses(hourlyJson);
+
+  // 3) 4시간봉으로 집계
   const closes4H = to4hCloses(closesH);
 
-  // 신호 계산(데이터 부족 시 자동 neutral/fallback 처리: lib/signals 가 담당)
+  // 4) 신호 계산
   const eval1h = decideSignalForSeries("1h", closesH);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
+
+  // 5) 마스터 종합
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  const lastD = last(closesD) ?? null;
+  // 6) 스냅샷용 현재가
+  const lastD = closesD.length ? closesD[closesD.length - 1] : null;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
@@ -103,7 +112,9 @@ export default async function BTCPage() {
       </section>
 
       {/* 디버그 뱃지 (임시) */}
-      <div className="text-[11px] text-brand-ink/50">daily:{closesD.length} · hourly:{closesH.length}</div>
+      <div className="text-[11px] text-brand-ink/50">
+        daily:{closesD.length} · hourly:{closesH.length} · 4h:{closes4H.length}
+      </div>
 
       {/* 2) 관점별 카드 (가이드 문구 포함) */}
       <section className="grid md:grid-cols-3 gap-6">
