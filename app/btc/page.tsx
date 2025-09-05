@@ -2,15 +2,15 @@
 import NextDynamic from "next/dynamic";
 import Link from "next/link";
 import { Info } from "@/components/Info";
-import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
+import { decideSignalForSeries, aggregateMaster, Tone } from "@/lib/signals";
 
-export const revalidate = 0;             // 디버깅/신선 데이터
-export const dynamic = "force-dynamic";  // 런타임 강제 (self-fetch 이슈 회피 목적)
+export const revalidate = 0;             // 최신 데이터
+export const dynamic = "force-dynamic";  // 런타임 강제
 
-// TV 차트(클라이언트 전용)
+// TV 차트(클라 전용)
 const TvChart = NextDynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-/** 공용 fetch + 디버그 메타 */
+/** 공용 fetch + 디버그 메타 수집 */
 async function fetchWithDebug(url: string, init?: RequestInit) {
   const meta: {
     url: string;
@@ -43,27 +43,26 @@ async function fetchWithDebug(url: string, init?: RequestInit) {
   }
 }
 
-/** Coingecko: BTC 일봉 */
-async function cgGetBtcDaily(days = 450) {
-  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+/** Coingecko: BTC 일봉 (365일 한도) */
+async function cgGetBtcDaily(days = 365) {
+  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${Math.min(
+    days,
+    365
+  )}&interval=daily`;
   return fetchWithDebug(url, { headers: { accept: "application/json" } });
 }
 
-/** Coingecko: BTC 시간봉 */
-async function cgGetBtcHourly(days = 60) {
-  // Coingecko는 hourly 최대 ~90일 지원
-  const capped = Math.min(days, 90);
-  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${capped}&interval=hourly`;
-  return fetchWithDebug(url, { headers: { accept: "application/json" } });
+/** Kraken: OHLC (interval=60 → 1H, 240 → 4H) */
+async function krakenOHLC(interval: 60 | 240) {
+  const url = `https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=${interval}`;
+  return fetchWithDebug(url);
 }
 
-/** {prices:[[ts,price],...]} → number[] */
+/** CG {prices:[[ts,price],...]} → number[] closes */
 function pickClosesFromCg(json: any) {
-  if (!Array.isArray(json?.prices)) {
-    return { closes: [] as number[], keyUsed: null as null | string };
-  }
+  if (!Array.isArray(json?.prices)) return [] as number[];
   const raw = json.prices as unknown[];
-  const closes = raw
+  return raw
     .map((p: unknown): number => {
       if (Array.isArray(p) && p.length >= 2) {
         const v = Number((p as [unknown, unknown])[1]);
@@ -72,7 +71,29 @@ function pickClosesFromCg(json: any) {
       return NaN;
     })
     .filter((v: number): v is number => Number.isFinite(v));
-  return { closes, keyUsed: "prices" as const };
+}
+
+/** Kraken {result:{PAIR:[[t,o,h,l,c,...],...]}} → number[] closes */
+function pickClosesFromKraken(json: any) {
+  const res = json?.result;
+  if (!res || typeof res !== "object") return [] as number[];
+  const keys = Object.keys(res).filter((k) => k !== "last");
+  for (const k of keys) {
+    const arr = res[k];
+    if (Array.isArray(arr) && arr.length) {
+      // 요소: [time, open, high, low, close, vwap, volume, count]
+      return arr
+        .map((row: unknown): number => {
+          if (Array.isArray(row) && row.length >= 5) {
+            const v = Number((row as any)[4]); // close
+            return Number.isFinite(v) ? v : NaN;
+          }
+          return NaN;
+        })
+        .filter((v: number): v is number => Number.isFinite(v));
+    }
+  }
+  return [] as number[];
 }
 
 function last<T>(arr: T[]): T | undefined {
@@ -90,21 +111,20 @@ function pill(t: Tone) {
 }
 
 export default async function BTCPage() {
-  // 1) Coingecko 직행
-  const [dailyResp, hourlyResp] = await Promise.all([
-    cgGetBtcDaily(450),
-    cgGetBtcHourly(60),
+  // 1) 데이터 소스 병렬 호출
+  const [dailyResp, h1Resp, h4Resp] = await Promise.all([
+    cgGetBtcDaily(365), // CG 일봉
+    krakenOHLC(60),     // Kraken 1H
+    krakenOHLC(240),    // Kraken 4H
   ]);
 
   // 2) 파싱
-  const { closes: closesD, keyUsed: keyD } = pickClosesFromCg(dailyResp.json);
-  const { closes: closesH, keyUsed: keyH } = pickClosesFromCg(hourlyResp.json);
+  const closesD = pickClosesFromCg(dailyResp.json);
+  const closes1H = pickClosesFromKraken(h1Resp.json);
+  const closes4H = pickClosesFromKraken(h4Resp.json);
 
-  // 3) 4시간봉 집계
-  const closes4H = to4hCloses(closesH);
-
-  // 4) 신호 계산
-  const eval1h = decideSignalForSeries("1h", closesH);
+  // 3) 신호 계산 (부족하면 내부 fallback 로직이 중립 처리)
+  const eval1h = decideSignalForSeries("1h", closes1H);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
   const master = aggregateMaster(eval1h, eval4h, eval1d);
@@ -164,7 +184,7 @@ export default async function BTCPage() {
         ))}
       </section>
 
-      {/* 3) 메인 차트 */}
+      {/* 3) 메인 차트 (일봉) */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
         <TvChart symbol="bitcoin" interval="D" height={480} />
@@ -176,17 +196,16 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* ---- DEBUG: Coingecko 응답 상태 ---- */}
+      {/* ---- DEBUG: 데이터 소스 상태 ---- */}
       <section className="rounded-xl border border-brand-line/40 bg-brand-card/70 p-4 text-[12px] text-brand-ink/80">
-        <div className="font-semibold mb-2">DEBUG (Coingecko)</div>
-        <div className="grid md:grid-cols-2 gap-4">
+        <div className="font-semibold mb-2">DEBUG (Data Sources)</div>
+        <div className="grid md:grid-cols-3 gap-4">
           <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">Daily</div>
+            <div className="font-medium mb-1">Daily (Coingecko)</div>
             <div>url: {dailyResp.meta.url}</div>
             <div>ok/status: {String(dailyResp.meta.ok)} / {dailyResp.meta.status}</div>
             <div>content-type: {dailyResp.meta.ct ?? "-"}</div>
             <div>isJson: {String(dailyResp.meta.isJson)}</div>
-            <div>keyUsed: {keyD ?? "-"}</div>
             <div>closesD.length: {closesD.length}</div>
             {dailyResp.meta.error && <div className="text-rose-300">error: {dailyResp.meta.error}</div>}
             <details className="mt-2">
@@ -195,18 +214,29 @@ export default async function BTCPage() {
             </details>
           </div>
           <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">Hourly</div>
-            <div>url: {hourlyResp.meta.url}</div>
-            <div>ok/status: {String(hourlyResp.meta.ok)} / {hourlyResp.meta.status}</div>
-            <div>content-type: {hourlyResp.meta.ct ?? "-"}</div>
-            <div>isJson: {String(hourlyResp.meta.isJson)}</div>
-            <div>keyUsed: {keyH ?? "-"}</div>
-            <div>closesH.length: {closesH.length}</div>
-            <div>closes4H.length: {closes4H.length}</div>
-            {hourlyResp.meta.error && <div className="text-rose-300">error: {hourlyResp.meta.error}</div>}
+            <div className="font-medium mb-1">1H (Kraken)</div>
+            <div>url: {h1Resp.meta.url}</div>
+            <div>ok/status: {String(h1Resp.meta.ok)} / {h1Resp.meta.status}</div>
+            <div>content-type: {h1Resp.meta.ct ?? "-"}</div>
+            <div>isJson: {String(h1Resp.meta.isJson)}</div>
+            <div>closes1H.length: {closes1H.length}</div>
+            {h1Resp.meta.error && <div className="text-rose-300">error: {h1Resp.meta.error}</div>}
             <details className="mt-2">
               <summary>body preview</summary>
-              <pre className="whitespace-pre-wrap text-xs opacity-80">{hourlyResp.meta.bodyPreview}</pre>
+              <pre className="whitespace-pre-wrap text-xs opacity-80">{h1Resp.meta.bodyPreview}</pre>
+            </details>
+          </div>
+          <div className="rounded-lg border border-brand-line/30 p-3">
+            <div className="font-medium mb-1">4H (Kraken)</div>
+            <div>url: {h4Resp.meta.url}</div>
+            <div>ok/status: {String(h4Resp.meta.ok)} / {h4Resp.meta.status}</div>
+            <div>content-type: {h4Resp.meta.ct ?? "-"}</div>
+            <div>isJson: {String(h4Resp.meta.isJson)}</div>
+            <div>closes4H.length: {closes4H.length}</div>
+            {h4Resp.meta.error && <div className="text-rose-300">error: {h4Resp.meta.error}</div>}
+            <details className="mt-2">
+              <summary>body preview</summary>
+              <pre className="whitespace-pre-wrap text-xs opacity-80">{h4Resp.meta.bodyPreview}</pre>
             </details>
           </div>
         </div>
