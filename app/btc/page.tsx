@@ -1,106 +1,60 @@
 // app/btc/page.tsx
-import NextDynamic from "next/dynamic";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Info } from "@/components/Info";
-import { decideSignalForSeries, aggregateMaster, Tone } from "@/lib/signals";
+import { sma } from "@/lib/indicators";
+import { decideSignalForSeries, aggregateMaster, to4hCloses, type Tone } from "@/lib/signals";
 
-export const revalidate = 0;             // 최신 데이터
-export const dynamic = "force-dynamic";  // 런타임 강제
+export const revalidate = 180; // 3분 캐시
 
-// TV 차트(클라 전용)
-const TvChart = NextDynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
+// TV 위젯(클라이언트 전용)
+const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-/** 공용 fetch + 디버그 메타 수집 */
-async function fetchWithDebug(url: string, init?: RequestInit) {
-  const meta: {
-    url: string;
-    ok?: boolean;
-    status?: number;
-    ct?: string | null;
-    isJson?: boolean;
-    bodyPreview?: string;
-    error?: string;
-  } = { url };
+/** ---------- 외부 데이터 소스 ---------- */
+/** Coingecko 일봉 (무료 한도: 최근 365일) */
+async function fetchDailyFromCoingecko(days = 365) {
   try {
-    const r = await fetch(url, { cache: "no-store", ...init });
-    meta.ok = r.ok;
-    meta.status = r.status;
-    meta.ct = r.headers.get("content-type");
-    const text = await r.text();
-    meta.bodyPreview = text.slice(0, 300);
-    meta.isJson = !!(meta.ct && meta.ct.includes("json"));
-    if (!r.ok) return { json: null, meta };
-    try {
-      const json = JSON.parse(text);
-      return { json, meta };
-    } catch (e: any) {
-      meta.error = `JSON.parse 실패: ${e?.message ?? e}`;
-      return { json: null, meta };
-    }
-  } catch (e: any) {
-    meta.error = `fetch 실패: ${e?.message ?? e}`;
-    return { json: null, meta };
+    const url =
+      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return { ok: false as const, url, status: r.status, json: null, closes: [] as number[] };
+    const json = await r.json();
+    const closes = Array.isArray(json?.prices)
+      ? (json.prices as unknown[])
+          .map((p: unknown) => (Array.isArray(p) && p.length >= 2 ? Number((p as [unknown, unknown])[1]) : NaN))
+          .filter((v: number): v is number => Number.isFinite(v))
+      : [];
+    return { ok: true as const, url, status: r.status, json, closes };
+  } catch {
+    return { ok: false as const, url: "cg:fail", status: 0, json: null, closes: [] as number[] };
   }
 }
 
-/** Coingecko: BTC 일봉 (365일 한도) */
-async function cgGetBtcDaily(days = 365) {
-  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${Math.min(
-    days,
-    365
-  )}&interval=daily`;
-  return fetchWithDebug(url, { headers: { accept: "application/json" } });
-}
-
-/** Kraken: OHLC (interval=60 → 1H, 240 → 4H) */
-async function krakenOHLC(interval: 60 | 240) {
-  const url = `https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=${interval}`;
-  return fetchWithDebug(url);
-}
-
-/** CG {prices:[[ts,price],...]} → number[] closes */
-function pickClosesFromCg(json: any) {
-  if (!Array.isArray(json?.prices)) return [] as number[];
-  const raw = json.prices as unknown[];
-  return raw
-    .map((p: unknown): number => {
-      if (Array.isArray(p) && p.length >= 2) {
-        const v = Number((p as [unknown, unknown])[1]);
-        return Number.isFinite(v) ? v : NaN;
-      }
-      return NaN;
-    })
-    .filter((v: number): v is number => Number.isFinite(v));
-}
-
-/** Kraken {result:{PAIR:[[t,o,h,l,c,...],...]}} → number[] closes */
-function pickClosesFromKraken(json: any) {
-  const res = json?.result;
-  if (!res || typeof res !== "object") return [] as number[];
-  const keys = Object.keys(res).filter((k) => k !== "last");
-  for (const k of keys) {
-    const arr = res[k];
-    if (Array.isArray(arr) && arr.length) {
-      // 요소: [time, open, high, low, close, vwap, volume, count]
-      return arr
-        .map((row: unknown): number => {
-          if (Array.isArray(row) && row.length >= 5) {
-            const v = Number((row as any)[4]); // close
-            return Number.isFinite(v) ? v : NaN;
-          }
-          return NaN;
-        })
-        .filter((v: number): v is number => Number.isFinite(v));
-    }
+/** Kraken OHLC: XBTUSD, interval = 60(1h) / 240(4h) */
+async function fetchKrakenCloses(intervalMinutes: 60 | 240) {
+  try {
+    const url = `https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=${intervalMinutes}`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return { ok: false as const, url, status: r.status, json: null, closes: [] as number[] };
+    const json = await r.json();
+    // Kraken: { result: { XXBTZUSD: [[ts, open, high, low, close, vwap, volume, count], ...] } }
+    const raw: unknown[] = json?.result?.XXBTZUSD ?? [];
+    const closes =
+      Array.isArray(raw)
+        ? raw
+            .map(row => (Array.isArray(row) && row.length >= 5 ? Number(row[4] as unknown) : NaN))
+            .filter((v: number): v is number => Number.isFinite(v))
+        : [];
+    return { ok: true as const, url, status: r.status, json, closes };
+  } catch {
+    return { ok: false as const, url: "kraken:fail", status: 0, json: null, closes: [] as number[] };
   }
-  return [] as number[];
 }
 
-function last<T>(arr: T[]): T | undefined {
-  return arr.length ? arr[arr.length - 1] : undefined;
-}
+/** ---------- 유틸/표기 ---------- */
+function last<T>(arr: T[]): T | undefined { return arr.length ? arr[arr.length - 1] : undefined; }
 function toneColor(t: Tone) {
-  return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-brand-ink/80";
+  // 요청: ‘투자 지양 권고(=중립 톤)’도 노랑으로
+  return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-yellow-300";
 }
 function pill(t: Tone) {
   return t === "buy"
@@ -109,146 +63,270 @@ function pill(t: Tone) {
     ? "bg-rose-600/20 text-rose-300 border border-rose-400/40"
     : "bg-yellow-600/20 text-yellow-300 border border-yellow-400/30";
 }
+function usd(n: number | null | undefined) {
+  if (typeof n !== "number" || !isFinite(n)) return "—";
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+/** 최근 N캔들(기본 5)에서 50MA/400MA 교차 탐지 → 'golden' | 'dead' | '없음' */
+function detectRecentCross50400(
+  closes: number[],
+  lookback = 5
+): "golden" | "dead" | "없음" {
+  if (!Array.isArray(closes) || closes.length < 410) return "없음"; // 400MA 계산 여유
+  const ma50 = sma(closes, 50);
+  const ma400 = sma(closes, 400);
+  const len = Math.min(ma50.length, ma400.length);
+  if (len < lookback + 1) return "없음";
+  // 끝에서 lookback 구간을 검사(더 최근의 교차를 우선 반환)
+  for (let i = len - lookback; i < len; i++) {
+    const prev = ma50[i - 1] - ma400[i - 1];
+    const curr = ma50[i] - ma400[i];
+    if (!isFinite(prev) || !isFinite(curr)) continue;
+    if (prev < 0 && curr > 0) return "golden"; // 상향 교차
+    if (prev > 0 && curr < 0) return "dead";   // 하향 교차
+  }
+  return "없음";
+}
+
+/** 가격 vs MA 상/하단 비교 문구 생성 */
+function priceVsMaLines(close: number | undefined, closes: number[]) {
+  const lines: string[] = [];
+  if (typeof close !== "number" || !isFinite(close) || closes.length < 60) {
+    lines.push("데이터 수집 중");
+    return lines;
+  }
+  const m50 = last(sma(closes, 50));
+  const m200 = last(sma(closes, 200));
+  const m400 = last(sma(closes, 400));
+  const pos = (m?: number) => (typeof m === "number" && isFinite(m) ? (close >= m ? "상단" : "하단") : "—");
+
+  lines.push(`50MA: ${pos(m50)} (${m50 ? usd(m50) : "—"})`);
+  lines.push(`200MA: ${pos(m200)} (${m200 ? usd(m200) : "—"})`);
+  lines.push(`400MA: ${pos(m400)} (${m400 ? usd(m400) : "—"})`);
+  return lines;
+}
+
+/** RSI 라벨(초보 친화) — ‘투자심리(RSI): …’ */
+function rsiLabelSimple(rsi: number | null | undefined) {
+  if (typeof rsi !== "number" || !isFinite(rsi)) return { text: "투자심리(RSI): —", cls: "text-brand-ink/70" };
+  const v = Math.round(rsi);
+  let desc = "표준 수준";
+  if (v <= 30) desc = "과매도 수준";
+  else if (v <= 45) desc = "매도세 우세 수준";
+  else if (v < 55) desc = "표준 수준";
+  else if (v < 70) desc = "매수세 우세 수준";
+  else desc = "과매수 수준";
+  const cls =
+    v >= 70 ? "text-rose-300" :
+    v <= 30 ? "text-emerald-300" : "text-brand-ink/80";
+  return { text: `투자심리(RSI): ${v} (${desc})`, cls };
+}
 
 export default async function BTCPage() {
-  // 1) 데이터 소스 병렬 호출
+  // 1) 데이터 수집
   const [dailyResp, h1Resp, h4Resp] = await Promise.all([
-    cgGetBtcDaily(365), // CG 일봉
-    krakenOHLC(60),     // Kraken 1H
-    krakenOHLC(240),    // Kraken 4H
+    fetchDailyFromCoingecko(365),
+    fetchKrakenCloses(60),
+    fetchKrakenCloses(240),
   ]);
 
-  // 2) 파싱
-  const closesD = pickClosesFromCg(dailyResp.json);
-  const closes1H = pickClosesFromKraken(h1Resp.json);
-  const closes4H = pickClosesFromKraken(h4Resp.json);
+  // 2) 종가 시계열
+  const closesD = dailyResp.closes;
+  const closes1H = h1Resp.closes;
+  const closes4H = h4Resp.closes.length ? h4Resp.closes : to4hCloses(closes1H); // Kraken 4H 실패 시 1H로 집계
 
-  // 3) 신호 계산 (부족하면 내부 fallback 로직이 중립 처리)
+  // 3) 신호 산출(단/중/장기)
   const eval1h = decideSignalForSeries("1h", closes1H);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  const lastD = last(closesD) ?? null;
+  // 4) 보조 표기: 현재가/MA, 최근 교차(5캔들)
+  const last1h = last(closes1H);
+  const last4h = last(closes4H);
+  const last1d = last(closesD);
+
+  const cross1h = detectRecentCross50400(closes1H, 5);
+  const cross4h = detectRecentCross50400(closes4H, 5);
+  const cross1d = detectRecentCross50400(closesD, 5);
+
+  const pvs1h = priceVsMaLines(last1h, closes1H);
+  const pvs4h = priceVsMaLines(last4h, closes4H);
+  const pvs1d = priceVsMaLines(last1d, closesD);
+
+  const rsiText1h = rsiLabelSimple(eval1h.rsi);
+  const rsiText4h = rsiLabelSimple(eval4h.rsi);
+  const rsiText1d = rsiLabelSimple(eval1d.rsi);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
-      <h2 className="text-xl font-semibold">비트코인 — 투자 관점 신호 (1h / 4h / 1d)</h2>
+      {/* 헤더(문구 수정) */}
+      <header className="space-y-2">
+        <h2 className="text-xl md:text-2xl font-semibold">
+          비트코인으로 읽는 오늘의 투자 방향 — 단·중·장기 즉시 판단
+        </h2>
+        <p className="text-sm text-brand-ink/80">
+          비트코인은 암호화폐 전체의 가장 중요한 <b>유동성·심리 엔진</b>입니다. BTC의 추세 전환은 알트 섹터의{" "}
+          <b>확대·위축</b>추세로 번지므로, BTC 해석으로 먼저 <b>투자 타이밍</b>을 선점하세요.
+        </p>
+      </header>
 
       {/* 1) 마스터 카드 */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className={`text-base md:text-lg font-semibold ${toneColor(master.tone)}`}>{master.label}</div>
         <div className="mt-2 text-sm text-brand-ink/80">
-          단기(1h): <b className={toneColor(eval1h.tone)}>{eval1h.recommendation}</b>{" "}
-          · 중기(4h): <b className={toneColor(eval4h.tone)}>{eval4h.recommendation}</b>{" "}
-          · 장기(1d): <b className={toneColor(eval1d.tone)}>{eval1d.recommendation}</b>
+          단기(24시간 이내 투자시 참고 · 1h 캔들 분석 기반):{" "}
+          <b className={toneColor(eval1h.tone)}>{eval1h.recommendation}</b>{" "}
+          · 중기(1주일 수준 투자시 참고 · 4h 캔들 분석 기반):{" "}
+          <b className={toneColor(eval4h.tone)}>{eval4h.recommendation}</b>{" "}
+          · 장기(긴 호흡의 투자 관점 · 1d+ 캔들 분석 기반):{" "}
+          <b className={toneColor(eval1d.tone)}>{eval1d.recommendation}</b>
         </div>
-        <div className="mt-3 text-xs text-brand-ink/70 flex gap-3 flex-wrap">
-          <Info label="기준" tip="MA(50/200/400) + RSI(14), 50/400 교차 최우선" />
-          <Info label="우선순위" tip="다수결, 동률 시 장기(1d) 우선" />
-          <Info label="왜 BTC?" tip="BTC는 크립토 유동성·심리의 엔진. 방향 전환=알트 확장/위축" />
-        </div>
+
+        {/* 기준/우선순위 — 정적 문장 */}
+        <ul className="mt-3 text-[12px] leading-6 text-brand-ink/70 list-disc pl-5">
+          <li>기준: MA(50/200/400) + 투자심리(RSI). <b>추세전환 신호(50↔400 교차)</b>는 최우선.</li>
+          <li>우선순위: 단·중·장기 다수결, 동률이면 장기(1d) 우선.</li>
+        </ul>
       </section>
 
-      {/* 2) 관점별 카드 */}
+      {/* 2) 관점별 카드(가격 vs MA, 최근 5캔들 추세전환, RSI 라벨) */}
       <section className="grid md:grid-cols-3 gap-6">
-        {[eval1h, eval4h, eval1d].map((s) => (
-          <div key={s.tf} className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-sm text-brand-ink/80">
-                {s.tf === "1h" ? "단기 (1h)" : s.tf === "4h" ? "중기 (4h)" : "장기 (1d)"}
-              </div>
-              <span className={`px-2 py-0.5 rounded-full text-xs ${pill(s.tone)}`}>
-                {s.tone === "buy" ? "매수" : s.tone === "sell" ? "매도" : "중립"}
-              </span>
-            </div>
-            <div className="text-[11px] text-brand-ink/60 mb-2">
-              {s.tf === "1h" ? "24시간 이하 투자 관점" : s.tf === "4h" ? "1주일 미만 투자 관점" : "긴 호흡의 투자 관점"}
-            </div>
-            <div className={`text-xl font-semibold ${toneColor(s.tone)}`}>{s.recommendation}</div>
-            <div className="mt-2 text-sm text-brand-ink/90">{s.status}</div>
-            <div className="mt-2 text-xs text-brand-ink/70">
-              50/400 교차:{" "}
-              <b className={s.cross50400 === "golden" ? "text-emerald-300" : s.cross50400 === "dead" ? "text-rose-300" : "text-brand-ink/80"}>
-                {s.cross50400 === "golden" ? "골든" : s.cross50400 === "dead" ? "데드" : "없음"}
-              </b>
-              {s._fallback && " (400MA 미충족: 50/200 기준 대체)"}
-            </div>
-            <div className="mt-1 text-xs text-brand-ink/70">
-              RSI(14):{" "}
-              <b className={s.rsiWarn === "탐욕 과열" ? "text-rose-300" : s.rsiWarn === "공포 과도" ? "text-emerald-300" : "text-brand-ink/80"}>
-                {s.rsi != null ? Math.round(s.rsi) : "—"} ({s.rsiWarn})
-              </b>
-            </div>
+        {/* 단기(1h) */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm text-brand-ink/80">단기 (24시간 이내 투자시 참고)</div>
+            <span className={`px-2 py-0.5 rounded-full text-xs ${pill(eval1h.tone)}`}>
+              {eval1h.tone === "buy" ? "매수" : eval1h.tone === "sell" ? "매도" : "중립"}
+            </span>
           </div>
-        ))}
+          <div className="text-xs text-brand-ink/60 mb-2">1h 캔들 분석 기반</div>
+
+          <div className={`text-xl font-semibold ${toneColor(eval1h.tone)}`}>{eval1h.recommendation}</div>
+          <div className="mt-2 text-sm text-brand-ink/90">{eval1h.status}</div>
+
+          <div className="mt-3 text-xs text-brand-ink/70">
+            <b>추세전환 신호(최근 5캔들): </b>
+            <span
+              className={
+                cross1h === "golden" ? "text-emerald-300" :
+                cross1h === "dead" ? "text-rose-300" : "text-brand-ink/80"
+              }
+            >
+              {cross1h === "없음" ? "없음" : (cross1h === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
+            </span>
+          </div>
+
+          <div className="mt-2 text-xs text-brand-ink/70">
+            {(() => {
+              const { text, cls } = rsiLabelSimple(eval1h.rsi);
+              return <span className={cls}>{text}</span>;
+            })()}
+          </div>
+
+          <div className="mt-3 text-xs text-brand-ink/70 space-y-1">
+            <div className="font-medium">가격 vs 이동평균</div>
+            {pvs1h.map((ln, i) => <div key={i}>{ln}</div>)}
+          </div>
+        </div>
+
+        {/* 중기(4h) */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm text-brand-ink/80">중기 (1주일 수준 투자시 참고)</div>
+            <span className={`px-2 py-0.5 rounded-full text-xs ${pill(eval4h.tone)}`}>
+              {eval4h.tone === "buy" ? "매수" : eval4h.tone === "sell" ? "매도" : "중립"}
+            </span>
+          </div>
+          <div className="text-xs text-brand-ink/60 mb-2">4h 캔들 분석 기반</div>
+
+          <div className={`text-xl font-semibold ${toneColor(eval4h.tone)}`}>{eval4h.recommendation}</div>
+          <div className="mt-2 text-sm text-brand-ink/90">{eval4h.status}</div>
+
+          <div className="mt-3 text-xs text-brand-ink/70">
+            <b>추세전환 신호(최근 5캔들): </b>
+            <span
+              className={
+                cross4h === "golden" ? "text-emerald-300" :
+                cross4h === "dead" ? "text-rose-300" : "text-brand-ink/80"
+              }
+            >
+              {cross4h === "없음" ? "없음" : (cross4h === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
+            </span>
+          </div>
+
+          <div className="mt-2 text-xs text-brand-ink/70">
+            {(() => {
+              const { text, cls } = rsiLabelSimple(eval4h.rsi);
+              return <span className={cls}>{text}</span>;
+            })()}
+          </div>
+
+          <div className="mt-3 text-xs text-brand-ink/70 space-y-1">
+            <div className="font-medium">가격 vs 이동평균</div>
+            {pvs4h.map((ln, i) => <div key={i}>{ln}</div>)}
+          </div>
+        </div>
+
+        {/* 장기(1d) */}
+        <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm text-brand-ink/80">장기 (긴 호흡의 투자 관점)</div>
+            <span className={`px-2 py-0.5 rounded-full text-xs ${pill(eval1d.tone)}`}>
+              {eval1d.tone === "buy" ? "매수" : eval1d.tone === "sell" ? "매도" : "중립"}
+            </span>
+          </div>
+          <div className="text-xs text-brand-ink/60 mb-2">1d+ 캔들 분석 기반</div>
+
+          <div className={`text-xl font-semibold ${toneColor(eval1d.tone)}`}>{eval1d.recommendation}</div>
+          <div className="mt-2 text-sm text-brand-ink/90">{eval1d.status}</div>
+
+          <div className="mt-3 text-xs text-brand-ink/70">
+            <b>추세전환 신호(최근 5캔들): </b>
+            <span
+              className={
+                cross1d === "golden" ? "text-emerald-300" :
+                cross1d === "dead" ? "text-rose-300" : "text-brand-ink/80"
+              }
+            >
+              {cross1d === "없음" ? "없음" : (cross1d === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
+            </span>
+          </div>
+
+          <div className="mt-2 text-xs text-brand-ink/70">
+            {(() => {
+              const { text, cls } = rsiLabelSimple(eval1d.rsi);
+              return <span className={cls}>{text}</span>;
+            })()}
+          </div>
+
+          <div className="mt-3 text-xs text-brand-ink/70 space-y-1">
+            <div className="font-medium">가격 vs 이동평균</div>
+            {pvs1d.map((ln, i) => <div key={i}>{ln}</div>)}
+          </div>
+        </div>
       </section>
 
-      {/* 3) 메인 차트 (일봉) */}
+      {/* 3) 메인 차트 (오버레이는 다음 단계에서) */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
         <TvChart symbol="bitcoin" interval="D" height={480} />
         <div className="mt-3 text-sm text-brand-ink/80">
-          현재가(스냅샷): {typeof lastD === "number" && Number.isFinite(lastD) ? `$${Math.round(lastD).toLocaleString()}` : "—"}
+          현재가(스냅샷): {usd(last(closesD))}
         </div>
         <div className="mt-2 text-[11px] text-brand-ink/60">
-          ※ 50/200/400 MA 및 RSI 오버레이는 다음 단계에서 위젯에 표시 예정(현재는 신호 카드로 제공).
+          ※ MA(50/200/400) & RSI 오버레이는 다음 단계에서 위젯에 추가 예정(현재는 카드로 제공).
         </div>
       </section>
 
-      {/* ---- DEBUG: 데이터 소스 상태 ---- */}
-      <section className="rounded-xl border border-brand-line/40 bg-brand-card/70 p-4 text-[12px] text-brand-ink/80">
-        <div className="font-semibold mb-2">DEBUG (Data Sources)</div>
-        <div className="grid md:grid-cols-3 gap-4">
-          <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">Daily (Coingecko)</div>
-            <div>url: {dailyResp.meta.url}</div>
-            <div>ok/status: {String(dailyResp.meta.ok)} / {dailyResp.meta.status}</div>
-            <div>content-type: {dailyResp.meta.ct ?? "-"}</div>
-            <div>isJson: {String(dailyResp.meta.isJson)}</div>
-            <div>closesD.length: {closesD.length}</div>
-            {dailyResp.meta.error && <div className="text-rose-300">error: {dailyResp.meta.error}</div>}
-            <details className="mt-2">
-              <summary>body preview</summary>
-              <pre className="whitespace-pre-wrap text-xs opacity-80">{dailyResp.meta.bodyPreview}</pre>
-            </details>
-          </div>
-          <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">1H (Kraken)</div>
-            <div>url: {h1Resp.meta.url}</div>
-            <div>ok/status: {String(h1Resp.meta.ok)} / {h1Resp.meta.status}</div>
-            <div>content-type: {h1Resp.meta.ct ?? "-"}</div>
-            <div>isJson: {String(h1Resp.meta.isJson)}</div>
-            <div>closes1H.length: {closes1H.length}</div>
-            {h1Resp.meta.error && <div className="text-rose-300">error: {h1Resp.meta.error}</div>}
-            <details className="mt-2">
-              <summary>body preview</summary>
-              <pre className="whitespace-pre-wrap text-xs opacity-80">{h1Resp.meta.bodyPreview}</pre>
-            </details>
-          </div>
-          <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">4H (Kraken)</div>
-            <div>url: {h4Resp.meta.url}</div>
-            <div>ok/status: {String(h4Resp.meta.ok)} / {h4Resp.meta.status}</div>
-            <div>content-type: {h4Resp.meta.ct ?? "-"}</div>
-            <div>isJson: {String(h4Resp.meta.isJson)}</div>
-            <div>closes4H.length: {closes4H.length}</div>
-            {h4Resp.meta.error && <div className="text-rose-300">error: {h4Resp.meta.error}</div>}
-            <details className="mt-2">
-              <summary>body preview</summary>
-              <pre className="whitespace-pre-wrap text-xs opacity-80">{h4Resp.meta.bodyPreview}</pre>
-            </details>
-          </div>
-        </div>
-      </section>
-
-      {/* 리스크 안내 & CTA */}
+      {/* 리스크 & CTA */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">리스크 관리 & 면책</div>
         <ul className="list-disc pl-5 text-xs leading-6 text-brand-ink/80">
-          <li>본 페이지의 신호는 <b>투자 자문이 아닌 참고용</b>입니다.</li>
-          <li>단기 변동성 구간에선 손절/분할매수 등 <b>리스크 관리</b> 전제.</li>
-          <li>데이터 소스(API) 지연·누락 시 신호가 지연될 수 있습니다.</li>
+          <li>본 페이지 신호는 <b>투자 자문이 아닌 참고용</b>입니다.</li>
+          <li>단기 변동성 구간에서는 손절·분할매수 등 <b>리스크 관리</b>를 전제로 접근하세요.</li>
+          <li>데이터 소스 지연/누락 시 신호 반영이 지연될 수 있습니다.</li>
         </ul>
       </section>
 
@@ -257,7 +335,7 @@ export default async function BTCPage() {
           <div>
             <div className="text-sm text-brand-ink/80 mb-1">프리미엄 신호 체험</div>
             <div className="text-base text-brand-ink/90">
-              동일 로직을 전 코인으로 확장 — 단·중·장기 종합 점수, 섹터 상대강도, 변동성 스크리너 제공.
+              동일 로직을 전 코인으로 확장 — 단·중·장기 종합 점수, 섹터 상대강도, 변동성 스크리너 제공(베타).
             </div>
           </div>
           <Link
