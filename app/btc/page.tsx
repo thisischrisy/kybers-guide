@@ -1,74 +1,71 @@
 // app/btc/page.tsx
-import NextDynamic from "next/dynamic"; // ← 별칭으로 임포트 (중요)
+import NextDynamic from "next/dynamic";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { Info } from "@/components/Info";
 import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
 
-// ✅ 내부 API 절대 URL 호출을 위해 동적 렌더링 강제
-export const dynamic = "force-dynamic";      // ← 페이지 설정용 예약 export
-export const fetchCache = "force-no-store";  // (옵션) 캐시 무효화
+export const revalidate = 0;              // 캐시 금지
+export const dynamic = "force-dynamic";   // SSG/ISR 방지 → 항상 런타임
 
+// TradingView (클라이언트 전용)
 const TvChart = NextDynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-/** 절대 URL 헬퍼 */
+/** 런타임/배포 환경을 가리지 않고 절대 baseUrl 생성 */
 function getBaseUrl() {
-  const envSite = process.env.NEXT_PUBLIC_SITE_URL; // ex) https://yourdomain.com
-  if (envSite) return envSite.replace(/\/$/, "");
-
+  // 클라이언트에서는 상대경로가 안전
+  if (typeof window !== "undefined") return "";
+  // Vercel 배포
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  // 개발 서버 (headers로 역추적)
   const h = headers();
-  const host =
-    h.get("x-forwarded-host") ??
-    h.get("host") ??
-    process.env.VERCEL_URL ??
-    "localhost:3000";
-
-  const proto =
-    h.get("x-forwarded-proto") ??
-    (process.env.VERCEL ? "https" : "http");
-
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host  = h.get("host") ?? "localhost:3000";
   return `${proto}://${host}`;
 }
 
-/** 내부 API: BTC 일봉 (기본 450일 — 400MA 계산용) */
+/** fetch JSON + content-type 안전검사 */
+async function safeJsonFetch(url: string) {
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return null;
+    const ct = r.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) return null;
+    return r.json();
+  } catch {
+    return null;
+  }
+}
+
+/** 내부 API 경유: BTC 일봉 (400MA 계산용 넉넉히) */
 async function apiGetBtcDaily(days = 450) {
-  try {
-    const base = getBaseUrl();
-    const r = await fetch(`${base}/api/btc/daily?days=${days}`, { cache: "no-store" });
-    if (!r.ok) return null;
-    return r.json(); // { prices: [[ts, price], ...] }
-  } catch {
-    return null;
-  }
+  const base = getBaseUrl();
+  return safeJsonFetch(`${base}/api/btc/daily?days=${days}`);
 }
 
-/** 내부 API: BTC 시간봉 (기본 60일 — 4H/1H 산출용) */
+/** 내부 API 경유: BTC 시간봉 (4H/1H 산출용) */
 async function apiGetBtcHourly(days = 60) {
-  try {
-    const base = getBaseUrl();
-    const r = await fetch(`${base}/api/btc/hourly?days=${days}`, { cache: "no-store" });
-    if (!r.ok) return null;
-    return r.json(); // { prices: [[ts, price], ...] }
-  } catch {
-    return null;
-  }
+  const base = getBaseUrl();
+  return safeJsonFetch(`${base}/api/btc/hourly?days=${days}`);
 }
 
-/** 안전 파서: {prices: [[ts, price], ...]} -> number[] (close들) */
-function pickCloses(json: unknown): number[] {
-  const arr = (json as any)?.prices;
-  if (!Array.isArray(arr)) return [];
-  return (arr as unknown[])
-    .map((row: unknown) => {
-      if (Array.isArray(row) && row.length >= 2) {
-        const v = Number((row as [unknown, unknown])[1]);
+/** {prices:[[ts,price],...]} → number[] (close들만 추출) */
+function pickCloses(json: any): number[] {
+  if (!Array.isArray(json?.prices)) return [];
+  return (json.prices as unknown[])
+    .map((p: unknown): number => {
+      if (Array.isArray(p) && p.length >= 2) {
+        const v = Number((p as [unknown, unknown])[1]);
         return Number.isFinite(v) ? v : NaN;
       }
       return NaN;
     })
-    .filter((v): v is number => Number.isFinite(v));
+    .filter((v: number): v is number => Number.isFinite(v));
 }
 
+function last<T>(arr: T[]): T | undefined {
+  return arr.length ? arr[arr.length - 1] : undefined;
+}
 function toneColor(t: Tone) {
   return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-brand-ink/80";
 }
@@ -81,7 +78,7 @@ function pill(t: Tone) {
 }
 
 export default async function BTCPage() {
-  // 1) 데이터 가져오기 (절대 URL 사용)
+  // 1) 데이터 가져오기 (절대 URL 사용 + JSON 보장)
   const [dailyJson, hourlyJson] = await Promise.all([
     apiGetBtcDaily(450),
     apiGetBtcHourly(60),
@@ -91,10 +88,10 @@ export default async function BTCPage() {
   const closesD: number[] = pickCloses(dailyJson);
   const closesH: number[] = pickCloses(hourlyJson);
 
-  // 3) 4시간봉 집계
-  const closes4H: number[] = to4hCloses(closesH);
+  // 3) 4시간봉으로 집계
+  const closes4H = to4hCloses(closesH);
 
-  // 4) 신호 계산
+  // 4) 신호 계산 (입력 부족시 lib/signals 내부 fallback로 안전 처리됨)
   const eval1h = decideSignalForSeries("1h", closesH);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
@@ -102,9 +99,10 @@ export default async function BTCPage() {
   // 5) 마스터 종합
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  // 6) 현재가(스냅샷)
-  const lastD = closesD.length ? closesD[closesD.length - 1] : null;
+  // 6) 스냅샷 현재가
+  const lastD = last(closesD) ?? null;
 
+  // ---- UI ----
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
       <h2 className="text-xl font-semibold">비트코인 — 투자 관점 신호 (1h / 4h / 1d)</h2>
@@ -118,13 +116,13 @@ export default async function BTCPage() {
           · 장기(1d): <b className={toneColor(eval1d.tone)}>{eval1d.recommendation}</b>
         </div>
         <div className="mt-3 text-xs text-brand-ink/70 flex gap-3 flex-wrap">
-          <Info label="기준" tip="MA(50/200/400) + RSI(14), 50/400 교차는 최우선" />
+          <Info label="기준" tip="MA(50/200/400) + RSI(14), 50/400 교차 최우선" />
           <Info label="우선순위" tip="다수결, 동률 시 장기(1d) 우선" />
           <Info label="왜 BTC?" tip="BTC는 크립토 유동성·심리의 엔진. 방향 전환=알트 확장/위축" />
         </div>
       </section>
 
-      {/* 디버그(임시) */}
+      {/* 디버그(임시): 실제 배열 길이 확인 */}
       <div className="text-[11px] text-brand-ink/50">
         dailyJson:{dailyJson ? "ok" : "null"} · hourlyJson:{hourlyJson ? "ok" : "null"} · D:{closesD.length} · H:{closesH.length} · 4H:{closes4H.length}
       </div>
@@ -144,7 +142,6 @@ export default async function BTCPage() {
             <div className="text-[11px] text-brand-ink/60 mb-2">
               {s.tf === "1h" ? "24시간 이하 투자 관점" : s.tf === "4h" ? "1주일 미만 투자 관점" : "긴 호흡의 투자 관점"}
             </div>
-
             <div className={`text-xl font-semibold ${toneColor(s.tone)}`}>{s.recommendation}</div>
             <div className="mt-2 text-sm text-brand-ink/90">{s.status}</div>
             <div className="mt-2 text-xs text-brand-ink/70">
