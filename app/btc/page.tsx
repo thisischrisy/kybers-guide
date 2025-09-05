@@ -367,6 +367,7 @@ export default async function BTCPage() {
           maInputs={[50, 200, 400]}
           showRsi={true}
           rsiLength={14}
+          debug={true}   // ← 임시로 켜서 진행상황 확인
         />
         <div className="mt-3 text-sm text-brand-ink/80">
           현재가(스냅샷): {usd(last(closesD))}
