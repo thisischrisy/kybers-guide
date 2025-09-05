@@ -1,28 +1,17 @@
 // app/btc/page.tsx
 import NextDynamic from "next/dynamic";
 import Link from "next/link";
-import { headers } from "next/headers";
 import { Info } from "@/components/Info";
 import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
 
-export const revalidate = 0;              // 캐시 금지 (디버깅/신선 데이터)
-export const dynamic = "force-dynamic";   // 항상 런타임(SSG/ISR 방지)
+export const revalidate = 0;             // 디버깅/신선 데이터
+export const dynamic = "force-dynamic";  // 런타임 강제 (self-fetch 이슈 회피 목적)
 
 // TV 차트(클라이언트 전용)
 const TvChart = NextDynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-/** 절대 base URL 생성 (배포/프리뷰/로컬 모두 안전) */
-function getBaseUrl() {
-  if (typeof window !== "undefined") return "";
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  const h = headers();
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host  = h.get("host") ?? "localhost:3000";
-  return `${proto}://${host}`;
-}
-
-/** fetch + 응답 디버그 (본문 프리뷰까지 노출) */
-async function fetchWithDebug(url: string) {
+/** 공용 fetch + 디버그 메타 */
+async function fetchWithDebug(url: string, init?: RequestInit) {
   const meta: {
     url: string;
     ok?: boolean;
@@ -33,16 +22,14 @@ async function fetchWithDebug(url: string) {
     error?: string;
   } = { url };
   try {
-    const r = await fetch(url, { cache: "no-store" });
+    const r = await fetch(url, { cache: "no-store", ...init });
     meta.ok = r.ok;
     meta.status = r.status;
     meta.ct = r.headers.get("content-type");
     const text = await r.text();
     meta.bodyPreview = text.slice(0, 300);
     meta.isJson = !!(meta.ct && meta.ct.includes("json"));
-
     if (!r.ok) return { json: null, meta };
-    // content-type이 json이 아니더라도 JSON일 수 있어 try-parse
     try {
       const json = JSON.parse(text);
       return { json, meta };
@@ -56,29 +43,26 @@ async function fetchWithDebug(url: string) {
   }
 }
 
-/** 내부 API: BTC 일봉/시간봉 */
-async function apiGetBtcDaily(days = 450) {
-  const base = getBaseUrl();
-  return fetchWithDebug(`${base}/api/btc/daily?days=${days}`);
-}
-async function apiGetBtcHourly(days = 60) {
-  const base = getBaseUrl();
-  return fetchWithDebug(`${base}/api/btc/hourly?days=${days}`);
+/** Coingecko: BTC 일봉 */
+async function cgGetBtcDaily(days = 450) {
+  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+  return fetchWithDebug(url, { headers: { accept: "application/json" } });
 }
 
-/** {prices:[[ts,price],...]} | {가격:[[ts,price],...]} → number[] */
-function pickCloses(json: any) {
-  const key = Array.isArray(json?.prices)
-    ? "prices"
-    : Array.isArray(json?.가격)
-    ? "가격"
-    : null;
+/** Coingecko: BTC 시간봉 */
+async function cgGetBtcHourly(days = 60) {
+  // Coingecko는 hourly 최대 ~90일 지원
+  const capped = Math.min(days, 90);
+  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${capped}&interval=hourly`;
+  return fetchWithDebug(url, { headers: { accept: "application/json" } });
+}
 
-  if (!key) {
+/** {prices:[[ts,price],...]} → number[] */
+function pickClosesFromCg(json: any) {
+  if (!Array.isArray(json?.prices)) {
     return { closes: [] as number[], keyUsed: null as null | string };
   }
-
-  const raw = (json as any)[key] as unknown[];
+  const raw = json.prices as unknown[];
   const closes = raw
     .map((p: unknown): number => {
       if (Array.isArray(p) && p.length >= 2) {
@@ -88,8 +72,7 @@ function pickCloses(json: any) {
       return NaN;
     })
     .filter((v: number): v is number => Number.isFinite(v));
-
-  return { closes, keyUsed: key };
+  return { closes, keyUsed: "prices" as const };
 }
 
 function last<T>(arr: T[]): T | undefined {
@@ -107,20 +90,20 @@ function pill(t: Tone) {
 }
 
 export default async function BTCPage() {
-  // 1) API 호출(절대 URL + 디버그 포함)
+  // 1) Coingecko 직행
   const [dailyResp, hourlyResp] = await Promise.all([
-    apiGetBtcDaily(450),
-    apiGetBtcHourly(60),
+    cgGetBtcDaily(450),
+    cgGetBtcHourly(60),
   ]);
 
-  // 2) 파싱 (prices/가격 모두 지원)
-  const { closes: closesD, keyUsed: keyD } = pickCloses(dailyResp.json);
-  const { closes: closesH, keyUsed: keyH } = pickCloses(hourlyResp.json);
+  // 2) 파싱
+  const { closes: closesD, keyUsed: keyD } = pickClosesFromCg(dailyResp.json);
+  const { closes: closesH, keyUsed: keyH } = pickClosesFromCg(hourlyResp.json);
 
   // 3) 4시간봉 집계
   const closes4H = to4hCloses(closesH);
 
-  // 4) 신호 계산 (lib/signals 내부에서 데이터 부족 시 보수적 fallback)
+  // 4) 신호 계산
   const eval1h = decideSignalForSeries("1h", closesH);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
@@ -193,13 +176,12 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* ---- 디버그: 무엇이 잘못인지 페이지에서 즉시 보자 ---- */}
+      {/* ---- DEBUG: Coingecko 응답 상태 ---- */}
       <section className="rounded-xl border border-brand-line/40 bg-brand-card/70 p-4 text-[12px] text-brand-ink/80">
-        <div className="font-semibold mb-2">DEBUG</div>
-        <div>baseUrl: <code>{getBaseUrl()}</code></div>
-        <div className="grid md:grid-cols-2 gap-4 mt-3">
+        <div className="font-semibold mb-2">DEBUG (Coingecko)</div>
+        <div className="grid md:grid-cols-2 gap-4">
           <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">/api/btc/daily</div>
+            <div className="font-medium mb-1">Daily</div>
             <div>url: {dailyResp.meta.url}</div>
             <div>ok/status: {String(dailyResp.meta.ok)} / {dailyResp.meta.status}</div>
             <div>content-type: {dailyResp.meta.ct ?? "-"}</div>
@@ -213,7 +195,7 @@ export default async function BTCPage() {
             </details>
           </div>
           <div className="rounded-lg border border-brand-line/30 p-3">
-            <div className="font-medium mb-1">/api/btc/hourly</div>
+            <div className="font-medium mb-1">Hourly</div>
             <div>url: {hourlyResp.meta.url}</div>
             <div>ok/status: {String(hourlyResp.meta.ok)} / {hourlyResp.meta.status}</div>
             <div>content-type: {hourlyResp.meta.ct ?? "-"}</div>
@@ -230,7 +212,7 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* 리스크 안내 & CTA (생략 없이 유지) */}
+      {/* 리스크 안내 & CTA */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">리스크 관리 & 면책</div>
         <ul className="list-disc pl-5 text-xs leading-6 text-brand-ink/80">
