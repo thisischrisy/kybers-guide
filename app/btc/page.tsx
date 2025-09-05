@@ -53,7 +53,7 @@ async function fetchKrakenCloses(intervalMinutes: 60 | 240) {
 /** ---------- 유틸/표기 ---------- */
 function last<T>(arr: T[]): T | undefined { return arr.length ? arr[arr.length - 1] : undefined; }
 function toneColor(t: Tone) {
-  // 요청: ‘투자 지양 권고(=중립 톤)’도 노랑으로
+  // ‘투자 지양 권고(중립)’도 노랑
   return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-yellow-300";
 }
 function pill(t: Tone) {
@@ -67,6 +67,18 @@ function usd(n: number | null | undefined) {
   if (typeof n !== "number" || !isFinite(n)) return "—";
   return `$${Math.round(n).toLocaleString()}`;
 }
+function pctTxt(n: number | null | undefined) {
+  if (typeof n !== "number" || !isFinite(n)) return "—";
+  const s = n > 0 ? "▲" : n < 0 ? "▼" : "";
+  return `${s}${Math.abs(n).toFixed(2)}%`;
+}
+/** 뒤에서 k번째 대비 %변화(음수/양수) */
+function pctFromTail(arr: number[], k: number) {
+  if (!Array.isArray(arr) || arr.length <= k) return NaN;
+  const a = arr[arr.length - 1];
+  const b = arr[arr.length - 1 - k];
+  return isFinite(a) && isFinite(b) && b !== 0 ? ((a - b) / b) * 100 : NaN;
+}
 
 /** 최근 N캔들(기본 5)에서 50MA/400MA 교차 탐지 → 'golden' | 'dead' | '없음' */
 function detectRecentCross50400(
@@ -78,36 +90,45 @@ function detectRecentCross50400(
   const ma400 = sma(closes, 400);
   const len = Math.min(ma50.length, ma400.length);
   if (len < lookback + 1) return "없음";
-  // 끝에서 lookback 구간을 검사(더 최근의 교차를 우선 반환)
   for (let i = len - lookback; i < len; i++) {
     const prev = ma50[i - 1] - ma400[i - 1];
     const curr = ma50[i] - ma400[i];
     if (!isFinite(prev) || !isFinite(curr)) continue;
-    if (prev < 0 && curr > 0) return "golden"; // 상향 교차
-    if (prev > 0 && curr < 0) return "dead";   // 하향 교차
+    if (prev < 0 && curr > 0) return "golden";
+    if (prev > 0 && curr < 0) return "dead";
   }
   return "없음";
 }
 
-/** 가격 vs MA 상/하단 비교 문구 생성 */
+/** 가격 vs MA — 초보 친화 메시지 */
 function priceVsMaLines(close: number | undefined, closes: number[]) {
   const lines: string[] = [];
   if (typeof close !== "number" || !isFinite(close) || closes.length < 60) {
     lines.push("데이터 수집 중");
     return lines;
   }
+  const current = close; // 이미 숫자 보장
+
   const m50 = last(sma(closes, 50));
   const m200 = last(sma(closes, 200));
   const m400 = last(sma(closes, 400));
-  const pos = (m?: number) => (typeof m === "number" && isFinite(m) ? (close >= m ? "상단" : "하단") : "—");
 
-  lines.push(`50MA: ${pos(m50)} (${m50 ? usd(m50) : "—"})`);
-  lines.push(`200MA: ${pos(m200)} (${m200 ? usd(m200) : "—"})`);
-  lines.push(`400MA: ${pos(m400)} (${m400 ? usd(m400) : "—"})`);
+  function line(name: string, m?: number) {
+    // ⬇ close 안전 가드 추가 (TS 에러 해소)
+    if (typeof m !== "number" || !isFinite(m) || typeof current !== "number" || !isFinite(current)) {
+      return `${name}: —`;
+    }
+    const dir = current >= m ? "위(강세 경향)" : "아래(약세 경향)";
+    return `${name}: 현재가가 ${dir} — 현재 ${usd(current)} vs ${name} ${usd(m)}`;
+  }
+
+  lines.push(line("50MA", m50));
+  lines.push(line("200MA", m200));
+  lines.push(line("400MA", m400));
   return lines;
 }
 
-/** RSI 라벨(초보 친화) — ‘투자심리(RSI): …’ */
+/** RSI 라벨(초보 친화) */
 function rsiLabelSimple(rsi: number | null | undefined) {
   if (typeof rsi !== "number" || !isFinite(rsi)) return { text: "투자심리(RSI): —", cls: "text-brand-ink/70" };
   const v = Math.round(rsi);
@@ -134,7 +155,7 @@ export default async function BTCPage() {
   // 2) 종가 시계열
   const closesD = dailyResp.closes;
   const closes1H = h1Resp.closes;
-  const closes4H = h4Resp.closes.length ? h4Resp.closes : to4hCloses(closes1H); // Kraken 4H 실패 시 1H로 집계
+  const closes4H = h4Resp.closes.length ? h4Resp.closes : to4hCloses(closes1H);
 
   // 3) 신호 산출(단/중/장기)
   const eval1h = decideSignalForSeries("1h", closes1H);
@@ -142,7 +163,7 @@ export default async function BTCPage() {
   const eval1d = decideSignalForSeries("1d", closesD);
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  // 4) 보조 표기: 현재가/MA, 최근 교차(5캔들)
+  // 4) 보조 표기: 현재가/MA, 최근 교차(5캔들), RSI 라벨
   const last1h = last(closes1H);
   const last4h = last(closes4H);
   const last1d = last(closesD);
@@ -159,9 +180,16 @@ export default async function BTCPage() {
   const rsiText4h = rsiLabelSimple(eval4h.rsi);
   const rsiText1d = rsiLabelSimple(eval1d.rsi);
 
+  // 5) 마스터 카드용 스냅샷
+  const curr = last1d ?? last4h ?? last1h ?? null;
+  const chg1h = pctFromTail(closes1H, 1);
+  const chg1d = pctFromTail(closesD, 1);
+  const chg1w = pctFromTail(closesD, 7);
+  const chg1m = pctFromTail(closesD, 30);
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
-      {/* 헤더(문구 수정) */}
+      {/* 헤더 */}
       <header className="space-y-2">
         <h2 className="text-xl md:text-2xl font-semibold">
           비트코인으로 읽는 오늘의 투자 방향 — 단·중·장기 즉시 판단
@@ -175,23 +203,35 @@ export default async function BTCPage() {
       {/* 1) 마스터 카드 */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-6">
         <div className={`text-base md:text-lg font-semibold ${toneColor(master.tone)}`}>{master.label}</div>
+
+        {/* 현재가 + 변화율 */}
         <div className="mt-2 text-sm text-brand-ink/80">
-          단기(24시간 이내 투자시 참고 · 1h 캔들 분석 기반):{" "}
-          <b className={toneColor(eval1h.tone)}>{eval1h.recommendation}</b>{" "}
-          · 중기(1주일 수준 투자시 참고 · 4h 캔들 분석 기반):{" "}
-          <b className={toneColor(eval4h.tone)}>{eval4h.recommendation}</b>{" "}
-          · 장기(긴 호흡의 투자 관점 · 1d+ 캔들 분석 기반):{" "}
-          <b className={toneColor(eval1d.tone)}>{eval1d.recommendation}</b>
+          현재가: <b>{usd(curr)}</b>{" "}
+          <span className="ml-2 text-xs text-brand-ink/70">
+            (1h {pctTxt(chg1h)} · 1d {pctTxt(chg1d)} · 1w {pctTxt(chg1w)} · 1m {pctTxt(chg1m)})
+          </span>
         </div>
 
-        {/* 기준/우선순위 — 정적 문장 */}
-        <ul className="mt-3 text-[12px] leading-6 text-brand-ink/70 list-disc pl-5">
-          <li>기준: MA(50/200/400) + 투자심리(RSI). <b>추세전환 신호(50↔400 교차)</b>는 최우선.</li>
-          <li>우선순위: 단·중·장기 다수결, 동률이면 장기(1d) 우선.</li>
-        </ul>
+        {/* (i) 툴팁: 기준/우선순위 */}
+        <div className="mt-3 flex items-center gap-3 text-xs">
+          <span
+            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-brand-line/40 bg-brand-card/80 cursor-help"
+            title="기준: MA(50/200/400) + 투자심리(RSI). 추세전환 신호(50↔400 교차)는 최우선."
+            aria-label="기준 도움말"
+          >
+            ℹ️ 기준
+          </span>
+          <span
+            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-brand-line/40 bg-brand-card/80 cursor-help"
+            title="우선순위: 단·중·장기 다수결, 동률이면 장기(1d) 우선."
+            aria-label="우선순위 도움말"
+          >
+            ℹ️ 우선순위
+          </span>
+        </div>
       </section>
 
-      {/* 2) 관점별 카드(가격 vs MA, 최근 5캔들 추세전환, RSI 라벨) */}
+      {/* 2) 관점별 카드 */}
       <section className="grid md:grid-cols-3 gap-6">
         {/* 단기(1h) */}
         <div className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-5">
@@ -210,11 +250,14 @@ export default async function BTCPage() {
             <b>추세전환 신호(최근 5캔들): </b>
             <span
               className={
-                cross1h === "golden" ? "text-emerald-300" :
-                cross1h === "dead" ? "text-rose-300" : "text-brand-ink/80"
+                detectRecentCross50400(closes1H, 5) === "golden" ? "text-emerald-300" :
+                detectRecentCross50400(closes1H, 5) === "dead" ? "text-rose-300" : "text-brand-ink/80"
               }
             >
-              {cross1h === "없음" ? "없음" : (cross1h === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
+              {(() => {
+                const c = detectRecentCross50400(closes1H, 5);
+                return c === "없음" ? "없음" : (c === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)");
+              })()}
             </span>
           </div>
 
@@ -227,7 +270,7 @@ export default async function BTCPage() {
 
           <div className="mt-3 text-xs text-brand-ink/70 space-y-1">
             <div className="font-medium">가격 vs 이동평균</div>
-            {pvs1h.map((ln, i) => <div key={i}>{ln}</div>)}
+            {priceVsMaLines(last(closes1H), closes1H).map((ln, i) => <div key={i}>{ln}</div>)}
           </div>
         </div>
 
@@ -248,11 +291,14 @@ export default async function BTCPage() {
             <b>추세전환 신호(최근 5캔들): </b>
             <span
               className={
-                cross4h === "golden" ? "text-emerald-300" :
-                cross4h === "dead" ? "text-rose-300" : "text-brand-ink/80"
+                detectRecentCross50400(closes4H, 5) === "golden" ? "text-emerald-300" :
+                detectRecentCross50400(closes4H, 5) === "dead" ? "text-rose-300" : "text-brand-ink/80"
               }
             >
-              {cross4h === "없음" ? "없음" : (cross4h === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
+              {(() => {
+                const c = detectRecentCross50400(closes4H, 5);
+                return c === "없음" ? "없음" : (c === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)");
+              })()}
             </span>
           </div>
 
@@ -265,7 +311,7 @@ export default async function BTCPage() {
 
           <div className="mt-3 text-xs text-brand-ink/70 space-y-1">
             <div className="font-medium">가격 vs 이동평균</div>
-            {pvs4h.map((ln, i) => <div key={i}>{ln}</div>)}
+            {priceVsMaLines(last(closes4H), closes4H).map((ln, i) => <div key={i}>{ln}</div>)}
           </div>
         </div>
 
@@ -286,11 +332,14 @@ export default async function BTCPage() {
             <b>추세전환 신호(최근 5캔들): </b>
             <span
               className={
-                cross1d === "golden" ? "text-emerald-300" :
-                cross1d === "dead" ? "text-rose-300" : "text-brand-ink/80"
+                detectRecentCross50400(closesD, 5) === "golden" ? "text-emerald-300" :
+                detectRecentCross50400(closesD, 5) === "dead" ? "text-rose-300" : "text-brand-ink/80"
               }
             >
-              {cross1d === "없음" ? "없음" : (cross1d === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
+              {(() => {
+                const c = detectRecentCross50400(closesD, 5);
+                return c === "없음" ? "없음" : (c === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)");
+              })()}
             </span>
           </div>
 
@@ -303,12 +352,12 @@ export default async function BTCPage() {
 
           <div className="mt-3 text-xs text-brand-ink/70 space-y-1">
             <div className="font-medium">가격 vs 이동평균</div>
-            {pvs1d.map((ln, i) => <div key={i}>{ln}</div>)}
+            {priceVsMaLines(last(closesD), closesD).map((ln, i) => <div key={i}>{ln}</div>)}
           </div>
         </div>
       </section>
 
-      {/* 3) 메인 차트 (오버레이는 다음 단계에서) */}
+      {/* 3) 메인 차트 (1D 기본) — 오버레이는 TvChart 래퍼 확장 후 연결 */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
         <TvChart symbol="bitcoin" interval="D" height={480} />
@@ -316,7 +365,7 @@ export default async function BTCPage() {
           현재가(스냅샷): {usd(last(closesD))}
         </div>
         <div className="mt-2 text-[11px] text-brand-ink/60">
-          ※ MA(50/200/400) & RSI 오버레이는 다음 단계에서 위젯에 추가 예정(현재는 카드로 제공).
+          ※ MA(50/200/400)와 RSI 오버레이는 <code>components/TvChart.tsx</code>가 해당 props를 지원하면 바로 연결해 드립니다.
         </div>
       </section>
 
