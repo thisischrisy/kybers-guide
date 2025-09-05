@@ -3,12 +3,20 @@
 import { useEffect, useId, useRef } from "react";
 
 type Props = {
-  /** 기존 호환용: "bitcoin" | "ethereum" */
+  /** 간편심볼: 미지정 시 BINANCE:BTCUSDT 로 매핑 */
   symbol?: "bitcoin" | "ethereum";
-  /** 새로 추가: TradingView 심볼 문자열, 예) "BINANCE:SOLUSDT" */
+  /** TV 심볼 직접 지정 (예: "BINANCE:SOLUSDT") */
   tvSymbol?: string;
+  /** TV 위젯 간격 */
   interval?: "15" | "30" | "60" | "120" | "240" | "D";
   height?: number;
+
+  /** 추가: MA 오버레이 길이들(순서대로 그려짐). 기본 [50,200,400] */
+  maInputs?: number[];
+  /** 추가: RSI 표시 여부 (기본 true) */
+  showRsi?: boolean;
+  /** 추가: RSI 기간(기본 14) */
+  rsiLength?: number;
 };
 
 declare global {
@@ -23,12 +31,13 @@ export function TvChart({
   tvSymbol,
   interval = "240",
   height = 420,
+  maInputs = [50, 200, 400],
+  showRsi = true,
+  rsiLength = 14,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  // 고유 id 생성 (문자열)
   const containerId = useId().replace(/[:]/g, "-");
 
-  // 기본 매핑: tvSymbol이 안 들어오면 fallback
   const map: Record<string, string> = {
     bitcoin: "BINANCE:BTCUSDT",
     ethereum: "BINANCE:ETHUSDT",
@@ -38,7 +47,7 @@ export function TvChart({
   useEffect(() => {
     if (!hostRef.current) return;
 
-    // 호스트 비우고, 고유 id 가진 컨테이너 div를 만듭니다.
+    // 컨테이너 초기화
     hostRef.current.innerHTML = "";
     const container = document.createElement("div");
     container.id = containerId;
@@ -46,13 +55,13 @@ export function TvChart({
     container.style.height = "100%";
     hostRef.current.appendChild(container);
 
-    // TradingView 위젯 생성 함수
     const createWidget = () => {
-      if (!window.TradingView) return; // 아직 로드 전
+      if (!window.TradingView) return;
+
       try {
-        new window.TradingView.widget({
+        const widget = new window.TradingView.widget({
           autosize: true,
-          symbol: finalSymbol, // ✅ 여기서 최종 심볼 사용
+          symbol: finalSymbol,
           interval,
           timezone: "Etc/UTC",
           theme: "dark",
@@ -65,27 +74,47 @@ export function TvChart({
           allow_symbol_change: false,
           container_id: containerId,
         });
+
+        // 지표 오버레이는 차트 준비 후 추가
+        widget.onChartReady(() => {
+          const chart = widget.chart();
+
+          // 이동평균(단순) 오버레이: MA 50 / 200 / 400
+          // 이름은 TradingView 기본 스터디 명칭을 사용
+          maInputs.forEach((len) => {
+            try {
+              chart.createStudy("Moving Average", false, false, [len]);
+            } catch (e) {
+              console.warn("MA overlay failed:", e);
+            }
+          });
+
+          // RSI 오버레이
+          if (showRsi) {
+            try {
+              chart.createStudy("Relative Strength Index", false, false, [rsiLength]);
+            } catch (e) {
+              console.warn("RSI overlay failed:", e);
+            }
+          }
+        });
       } catch (e) {
         console.warn("TradingView init failed:", e);
       }
     };
 
-    // tv.js가 이미 로드됐는지 확인
+    // tv.js 로드/준비
     if (window.TradingView) {
       createWidget();
     } else {
-      // 중복 로드 방지
       if (!window.__tvScriptAppended) {
         const s = document.createElement("script");
         s.src = "https://s3.tradingview.com/tv.js";
         s.async = true;
-        s.onload = () => {
-          createWidget();
-        };
+        s.onload = () => createWidget();
         document.body.appendChild(s);
         window.__tvScriptAppended = true;
       } else {
-        // 이미 다른 컴포넌트가 로드 중이면, 약간 기다렸다가 시도
         const t = setInterval(() => {
           if (window.TradingView) {
             clearInterval(t);
@@ -95,13 +124,12 @@ export function TvChart({
       }
     }
 
-    // 언마운트 시 정리
     return () => {
       try {
         if (hostRef.current) hostRef.current.innerHTML = "";
       } catch {}
     };
-  }, [finalSymbol, interval, containerId]);
+  }, [finalSymbol, interval, containerId, maInputs, showRsi, rsiLength]);
 
   return (
     <div

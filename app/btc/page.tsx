@@ -360,7 +360,14 @@ export default async function BTCPage() {
       {/* 3) 메인 차트 (1D 기본) — 오버레이는 TvChart 래퍼 확장 후 연결 */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
-        <TvChart symbol="bitcoin" interval="D" height={480} />
+        <TvChart
+          symbol="bitcoin"
+          interval="D"
+          height={480}
+          maInputs={[50, 200, 400]}
+          showRsi={true}
+          rsiLength={14}
+        />
         <div className="mt-3 text-sm text-brand-ink/80">
           현재가(스냅샷): {usd(last(closesD))}
         </div>
