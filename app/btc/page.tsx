@@ -5,54 +5,81 @@ import { headers } from "next/headers";
 import { Info } from "@/components/Info";
 import { decideSignalForSeries, to4hCloses, aggregateMaster, Tone } from "@/lib/signals";
 
-export const revalidate = 0;              // 캐시 금지
-export const dynamic = "force-dynamic";   // SSG/ISR 방지 → 항상 런타임
+export const revalidate = 0;              // 캐시 금지 (디버깅/신선 데이터)
+export const dynamic = "force-dynamic";   // 항상 런타임(SSG/ISR 방지)
 
-// TradingView (클라이언트 전용)
+// TV 차트(클라이언트 전용)
 const TvChart = NextDynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
-/** 런타임/배포 환경을 가리지 않고 절대 baseUrl 생성 */
+/** 절대 base URL 생성 (배포/프리뷰/로컬 모두 안전) */
 function getBaseUrl() {
-  // 클라이언트에서는 상대경로가 안전
   if (typeof window !== "undefined") return "";
-  // Vercel 배포
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  // 개발 서버 (headers로 역추적)
   const h = headers();
   const proto = h.get("x-forwarded-proto") ?? "http";
   const host  = h.get("host") ?? "localhost:3000";
   return `${proto}://${host}`;
 }
 
-/** fetch JSON + content-type 안전검사 */
-async function safeJsonFetch(url: string) {
+/** fetch + 응답 디버그 (본문 프리뷰까지 노출) */
+async function fetchWithDebug(url: string) {
+  const meta: {
+    url: string;
+    ok?: boolean;
+    status?: number;
+    ct?: string | null;
+    isJson?: boolean;
+    bodyPreview?: string;
+    error?: string;
+  } = { url };
   try {
     const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) return null;
-    const ct = r.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) return null;
-    return r.json();
-  } catch {
-    return null;
+    meta.ok = r.ok;
+    meta.status = r.status;
+    meta.ct = r.headers.get("content-type");
+    const text = await r.text();
+    meta.bodyPreview = text.slice(0, 300);
+    meta.isJson = !!(meta.ct && meta.ct.includes("json"));
+
+    if (!r.ok) return { json: null, meta };
+    // content-type이 json이 아니더라도 JSON일 수 있어 try-parse
+    try {
+      const json = JSON.parse(text);
+      return { json, meta };
+    } catch (e: any) {
+      meta.error = `JSON.parse 실패: ${e?.message ?? e}`;
+      return { json: null, meta };
+    }
+  } catch (e: any) {
+    meta.error = `fetch 실패: ${e?.message ?? e}`;
+    return { json: null, meta };
   }
 }
 
-/** 내부 API 경유: BTC 일봉 (400MA 계산용 넉넉히) */
+/** 내부 API: BTC 일봉/시간봉 */
 async function apiGetBtcDaily(days = 450) {
   const base = getBaseUrl();
-  return safeJsonFetch(`${base}/api/btc/daily?days=${days}`);
+  return fetchWithDebug(`${base}/api/btc/daily?days=${days}`);
 }
-
-/** 내부 API 경유: BTC 시간봉 (4H/1H 산출용) */
 async function apiGetBtcHourly(days = 60) {
   const base = getBaseUrl();
-  return safeJsonFetch(`${base}/api/btc/hourly?days=${days}`);
+  return fetchWithDebug(`${base}/api/btc/hourly?days=${days}`);
 }
 
-/** {prices:[[ts,price],...]} → number[] (close들만 추출) */
-function pickCloses(json: any): number[] {
-  if (!Array.isArray(json?.prices)) return [];
-  return (json.prices as unknown[])
+/** {prices:[[ts,price],...]} | {가격:[[ts,price],...]} → number[] */
+function pickCloses(json: any) {
+  const key = Array.isArray(json?.prices)
+    ? "prices"
+    : Array.isArray(json?.가격)
+    ? "가격"
+    : null;
+
+  if (!key) {
+    return { closes: [] as number[], keyUsed: null as null | string };
+  }
+
+  const raw = (json as any)[key] as unknown[];
+  const closes = raw
     .map((p: unknown): number => {
       if (Array.isArray(p) && p.length >= 2) {
         const v = Number((p as [unknown, unknown])[1]);
@@ -61,6 +88,8 @@ function pickCloses(json: any): number[] {
       return NaN;
     })
     .filter((v: number): v is number => Number.isFinite(v));
+
+  return { closes, keyUsed: key };
 }
 
 function last<T>(arr: T[]): T | undefined {
@@ -78,31 +107,27 @@ function pill(t: Tone) {
 }
 
 export default async function BTCPage() {
-  // 1) 데이터 가져오기 (절대 URL 사용 + JSON 보장)
-  const [dailyJson, hourlyJson] = await Promise.all([
+  // 1) API 호출(절대 URL + 디버그 포함)
+  const [dailyResp, hourlyResp] = await Promise.all([
     apiGetBtcDaily(450),
     apiGetBtcHourly(60),
   ]);
 
-  // 2) 종가 배열 파싱
-  const closesD: number[] = pickCloses(dailyJson);
-  const closesH: number[] = pickCloses(hourlyJson);
+  // 2) 파싱 (prices/가격 모두 지원)
+  const { closes: closesD, keyUsed: keyD } = pickCloses(dailyResp.json);
+  const { closes: closesH, keyUsed: keyH } = pickCloses(hourlyResp.json);
 
-  // 3) 4시간봉으로 집계
+  // 3) 4시간봉 집계
   const closes4H = to4hCloses(closesH);
 
-  // 4) 신호 계산 (입력 부족시 lib/signals 내부 fallback로 안전 처리됨)
+  // 4) 신호 계산 (lib/signals 내부에서 데이터 부족 시 보수적 fallback)
   const eval1h = decideSignalForSeries("1h", closesH);
   const eval4h = decideSignalForSeries("4h", closes4H);
   const eval1d = decideSignalForSeries("1d", closesD);
-
-  // 5) 마스터 종합
   const master = aggregateMaster(eval1h, eval4h, eval1d);
 
-  // 6) 스냅샷 현재가
   const lastD = last(closesD) ?? null;
 
-  // ---- UI ----
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 space-y-8">
       <h2 className="text-xl font-semibold">비트코인 — 투자 관점 신호 (1h / 4h / 1d)</h2>
@@ -121,11 +146,6 @@ export default async function BTCPage() {
           <Info label="왜 BTC?" tip="BTC는 크립토 유동성·심리의 엔진. 방향 전환=알트 확장/위축" />
         </div>
       </section>
-
-      {/* 디버그(임시): 실제 배열 길이 확인 */}
-      <div className="text-[11px] text-brand-ink/50">
-        dailyJson:{dailyJson ? "ok" : "null"} · hourlyJson:{hourlyJson ? "ok" : "null"} · D:{closesD.length} · H:{closesH.length} · 4H:{closes4H.length}
-      </div>
 
       {/* 2) 관점별 카드 */}
       <section className="grid md:grid-cols-3 gap-6">
@@ -173,7 +193,44 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* 리스크 안내 & CTA */}
+      {/* ---- 디버그: 무엇이 잘못인지 페이지에서 즉시 보자 ---- */}
+      <section className="rounded-xl border border-brand-line/40 bg-brand-card/70 p-4 text-[12px] text-brand-ink/80">
+        <div className="font-semibold mb-2">DEBUG</div>
+        <div>baseUrl: <code>{getBaseUrl()}</code></div>
+        <div className="grid md:grid-cols-2 gap-4 mt-3">
+          <div className="rounded-lg border border-brand-line/30 p-3">
+            <div className="font-medium mb-1">/api/btc/daily</div>
+            <div>url: {dailyResp.meta.url}</div>
+            <div>ok/status: {String(dailyResp.meta.ok)} / {dailyResp.meta.status}</div>
+            <div>content-type: {dailyResp.meta.ct ?? "-"}</div>
+            <div>isJson: {String(dailyResp.meta.isJson)}</div>
+            <div>keyUsed: {keyD ?? "-"}</div>
+            <div>closesD.length: {closesD.length}</div>
+            {dailyResp.meta.error && <div className="text-rose-300">error: {dailyResp.meta.error}</div>}
+            <details className="mt-2">
+              <summary>body preview</summary>
+              <pre className="whitespace-pre-wrap text-xs opacity-80">{dailyResp.meta.bodyPreview}</pre>
+            </details>
+          </div>
+          <div className="rounded-lg border border-brand-line/30 p-3">
+            <div className="font-medium mb-1">/api/btc/hourly</div>
+            <div>url: {hourlyResp.meta.url}</div>
+            <div>ok/status: {String(hourlyResp.meta.ok)} / {hourlyResp.meta.status}</div>
+            <div>content-type: {hourlyResp.meta.ct ?? "-"}</div>
+            <div>isJson: {String(hourlyResp.meta.isJson)}</div>
+            <div>keyUsed: {keyH ?? "-"}</div>
+            <div>closesH.length: {closesH.length}</div>
+            <div>closes4H.length: {closes4H.length}</div>
+            {hourlyResp.meta.error && <div className="text-rose-300">error: {hourlyResp.meta.error}</div>}
+            <details className="mt-2">
+              <summary>body preview</summary>
+              <pre className="whitespace-pre-wrap text-xs opacity-80">{hourlyResp.meta.bodyPreview}</pre>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      {/* 리스크 안내 & CTA (생략 없이 유지) */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/50 p-6">
         <div className="text-sm text-brand-ink/80 mb-2">리스크 관리 & 면책</div>
         <ul className="list-disc pl-5 text-xs leading-6 text-brand-ink/80">
