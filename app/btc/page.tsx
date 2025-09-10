@@ -6,21 +6,20 @@ import { decideSignalForSeries, aggregateMaster, to4hCloses, type Tone } from "@
 
 export const revalidate = 180; // 3분 캐시
 
-// TV 위젯(클라이언트 전용)
+// Lightweight 차트 + MA 오버레이
 const TvChart = dynamic(() => import("@/components/TvChart").then(m => m.TvChart), { ssr: false });
 
 /** ---------- 외부 데이터 소스 ---------- */
 /** Coingecko 일봉 (무료 한도: 최근 365일) */
 async function fetchDailyFromCoingecko(days = 365) {
   try {
-    const url =
-      `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+    const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
     const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) return { ok: false as const, url, status: r.status, json: null, closes: [] as number[] };
     const json = await r.json();
     const closes = Array.isArray(json?.prices)
       ? (json.prices as unknown[])
-          .map((p: unknown) => (Array.isArray(p) && p.length >= 2 ? Number((p as [unknown, unknown])[1]) : NaN))
+          .map((p: unknown): number => (Array.isArray(p) && p.length >= 2 ? Number((p as [unknown, unknown])[1]) : NaN))
           .filter((v: number): v is number => Number.isFinite(v))
       : [];
     return { ok: true as const, url, status: r.status, json, closes };
@@ -36,12 +35,13 @@ async function fetchKrakenCloses(intervalMinutes: 60 | 240) {
     const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) return { ok: false as const, url, status: r.status, json: null, closes: [] as number[] };
     const json = await r.json();
-    // Kraken: { result: { XXBTZUSD: [[ts, open, high, low, close, vwap, volume, count], ...] } }
     const raw: unknown[] = json?.result?.XXBTZUSD ?? [];
     const closes =
       Array.isArray(raw)
         ? raw
-            .map(row => (Array.isArray(row) && row.length >= 5 ? Number(row[4] as unknown) : NaN))
+            .map((row: unknown): number =>
+              Array.isArray(row) && row.length >= 5 ? Number(row[4] as unknown) : NaN
+            )
             .filter((v: number): v is number => Number.isFinite(v))
         : [];
     return { ok: true as const, url, status: r.status, json, closes };
@@ -53,8 +53,7 @@ async function fetchKrakenCloses(intervalMinutes: 60 | 240) {
 /** ---------- 유틸/표기 ---------- */
 function last<T>(arr: T[]): T | undefined { return arr.length ? arr[arr.length - 1] : undefined; }
 function toneColor(t: Tone) {
-  // ‘투자 지양 권고(중립)’도 노랑
-  return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-yellow-300";
+  return t === "buy" ? "text-emerald-300" : t === "sell" ? "text-rose-300" : "text-yellow-300"; // ‘지양’도 노랑
 }
 function pill(t: Tone) {
   return t === "buy"
@@ -72,7 +71,7 @@ function pctTxt(n: number | null | undefined) {
   const s = n > 0 ? "▲" : n < 0 ? "▼" : "";
   return `${s}${Math.abs(n).toFixed(2)}%`;
 }
-/** 뒤에서 k번째 대비 %변화(음수/양수) */
+/** 뒤에서 k번째 대비 %변화 */
 function pctFromTail(arr: number[], k: number) {
   if (!Array.isArray(arr) || arr.length <= k) return NaN;
   const a = arr[arr.length - 1];
@@ -85,7 +84,7 @@ function detectRecentCross50400(
   closes: number[],
   lookback = 5
 ): "golden" | "dead" | "없음" {
-  if (!Array.isArray(closes) || closes.length < 410) return "없음"; // 400MA 계산 여유
+  if (!Array.isArray(closes) || closes.length < 410) return "없음";
   const ma50 = sma(closes, 50);
   const ma400 = sma(closes, 400);
   const len = Math.min(ma50.length, ma400.length);
@@ -107,14 +106,12 @@ function priceVsMaLines(close: number | undefined, closes: number[]) {
     lines.push("데이터 수집 중");
     return lines;
   }
-  const current = close; // 이미 숫자 보장
-
+  const current = close;
   const m50 = last(sma(closes, 50));
   const m200 = last(sma(closes, 200));
   const m400 = last(sma(closes, 400));
 
   function line(name: string, m?: number) {
-    // ⬇ close 안전 가드 추가 (TS 에러 해소)
     if (typeof m !== "number" || !isFinite(m) || typeof current !== "number" || !isFinite(current)) {
       return `${name}: —`;
     }
@@ -168,10 +165,6 @@ export default async function BTCPage() {
   const last4h = last(closes4H);
   const last1d = last(closesD);
 
-  const cross1h = detectRecentCross50400(closes1H, 5);
-  const cross4h = detectRecentCross50400(closes4H, 5);
-  const cross1d = detectRecentCross50400(closesD, 5);
-
   const pvs1h = priceVsMaLines(last1h, closes1H);
   const pvs4h = priceVsMaLines(last4h, closes4H);
   const pvs1d = priceVsMaLines(last1d, closesD);
@@ -179,6 +172,10 @@ export default async function BTCPage() {
   const rsiText1h = rsiLabelSimple(eval1h.rsi);
   const rsiText4h = rsiLabelSimple(eval4h.rsi);
   const rsiText1d = rsiLabelSimple(eval1d.rsi);
+
+  const cross1h = detectRecentCross50400(closes1H, 5);
+  const cross4h = detectRecentCross50400(closes4H, 5);
+  const cross1d = detectRecentCross50400(closesD, 5);
 
   // 5) 마스터 카드용 스냅샷
   const curr = last1d ?? last4h ?? last1h ?? null;
@@ -250,14 +247,11 @@ export default async function BTCPage() {
             <b>추세전환 신호(최근 5캔들): </b>
             <span
               className={
-                detectRecentCross50400(closes1H, 5) === "golden" ? "text-emerald-300" :
-                detectRecentCross50400(closes1H, 5) === "dead" ? "text-rose-300" : "text-brand-ink/80"
+                cross1h === "golden" ? "text-emerald-300" :
+                cross1h === "dead" ? "text-rose-300" : "text-brand-ink/80"
               }
             >
-              {(() => {
-                const c = detectRecentCross50400(closes1H, 5);
-                return c === "없음" ? "없음" : (c === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)");
-              })()}
+              {cross1h === "없음" ? "없음" : (cross1h === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
             </span>
           </div>
 
@@ -291,14 +285,11 @@ export default async function BTCPage() {
             <b>추세전환 신호(최근 5캔들): </b>
             <span
               className={
-                detectRecentCross50400(closes4H, 5) === "golden" ? "text-emerald-300" :
-                detectRecentCross50400(closes4H, 5) === "dead" ? "text-rose-300" : "text-brand-ink/80"
+                cross4h === "golden" ? "text-emerald-300" :
+                cross4h === "dead" ? "text-rose-300" : "text-brand-ink/80"
               }
             >
-              {(() => {
-                const c = detectRecentCross50400(closes4H, 5);
-                return c === "없음" ? "없음" : (c === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)");
-              })()}
+              {cross4h === "없음" ? "없음" : (cross4h === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
             </span>
           </div>
 
@@ -332,14 +323,11 @@ export default async function BTCPage() {
             <b>추세전환 신호(최근 5캔들): </b>
             <span
               className={
-                detectRecentCross50400(closesD, 5) === "golden" ? "text-emerald-300" :
-                detectRecentCross50400(closesD, 5) === "dead" ? "text-rose-300" : "text-brand-ink/80"
+                cross1d === "golden" ? "text-emerald-300" :
+                cross1d === "dead" ? "text-rose-300" : "text-brand-ink/80"
               }
             >
-              {(() => {
-                const c = detectRecentCross50400(closesD, 5);
-                return c === "없음" ? "없음" : (c === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)");
-              })()}
+              {cross1d === "없음" ? "없음" : (cross1d === "golden" ? "골든크로스(매수 전환)" : "데드크로스(매도 전환)")}
             </span>
           </div>
 
@@ -357,20 +345,10 @@ export default async function BTCPage() {
         </div>
       </section>
 
-      {/* 3) 메인 차트 (1D 기본) — 오버레이는 TvChart 래퍼 확장 후 연결 */}
+      {/* 3) 메인 차트 — MA(50/200/400) 오버레이 */}
       <section className="rounded-xl border border-brand-line/30 bg-brand-card/60 p-4">
         <div className="text-sm text-brand-ink/80 mb-2">BTC 차트 (Daily)</div>
-        <TvChart
-          symbol="bitcoin"
-          interval="D"
-          height={480}
-        />
-        <div className="mt-3 text-sm text-brand-ink/80">
-          현재가(스냅샷): {usd(last(closesD))}
-        </div>
-        <div className="mt-2 text-[11px] text-brand-ink/60">
-          ※ MA(50/200/400)와 RSI 오버레이는 <code>components/TvChart.tsx</code>가 해당 props를 지원하면 바로 연결해 드립니다.
-        </div>
+        <TvChart interval="1d" height={480} maInputs={[50, 200, 400]} />
       </section>
 
       {/* 리스크 & CTA */}
