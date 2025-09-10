@@ -6,15 +6,18 @@ import {
   IChartApi,
   ISeriesApi,
   LineData,
-  LineSeries,   // ✅ v5: 시리즈 정의 상수
+  LineSeries,
   Time,
 } from "lightweight-charts";
 
-type TF = "1h" | "4h" | "1d";
+/** 외부에서 올 수 있는 다양한 interval 문자열 */
+type TfLike = "1h" | "4h" | "1d" | "15" | "30" | "60" | "120" | "240" | "D";
 
 type Props = {
-  /** 기본 1d */
-  interval?: TF;
+  /** 과거 버전 호환(안 써도 됨) */
+  symbol?: string;
+  /** 1h/4h/1d 외에도 "30","60","240","D" 등 들어와도 내부에서 표준화 처리 */
+  interval?: TfLike;
   height?: number;
   /** 표시할 MA 길이들 */
   maInputs?: number[];
@@ -86,7 +89,17 @@ async function fetchHourly(days = 60): Promise<{ time: number; close: number }[]
     .filter((x: { time: number; close: number }) => Number.isFinite(x.time) && Number.isFinite(x.close));
 }
 
+/** 외부에서 들어온 interval 문자열을 내부 표준("1h"|"4h"|"1d")로 정규화 */
+function normalizeTf(tf?: TfLike): "1h" | "4h" | "1d" {
+  if (!tf) return "1d";
+  if (tf === "1h" || tf === "60" || tf === "120" || tf === "15" || tf === "30") return "1h"; // 시간봉 계열은 1h로 표준화
+  if (tf === "4h" || tf === "240") return "4h";
+  // "1d" | "D" 그 외 기본 일봉
+  return "1d";
+}
+
 export function TvChart({
+  symbol, // (호환 목적) 사용 안 해도 유지
   interval = "1d",
   height = 420,
   maInputs = [50, 200, 400],
@@ -105,10 +118,11 @@ export function TvChart({
       setLoading(true);
       setErr("");
       try {
-        if (interval === "1d") {
+        const tf = normalizeTf(interval);
+        if (tf === "1d") {
           const d = await fetchDaily(365);
           if (!aborted) setData(d);
-        } else if (interval === "1h") {
+        } else if (tf === "1h") {
           const h = await fetchHourly(60);
           if (!aborted) setData(h);
         } else {
