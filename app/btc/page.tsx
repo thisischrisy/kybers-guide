@@ -364,9 +364,6 @@ export default async function BTCPage() {
           symbol="bitcoin"
           interval="D"
           height={480}
-          maInputs={[50, 200, 400]}
-          showRsi={true}
-          rsiLength={14}
         />
         <div className="mt-3 text-sm text-brand-ink/80">
           현재가(스냅샷): {usd(last(closesD))}
