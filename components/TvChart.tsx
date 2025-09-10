@@ -14,12 +14,11 @@ import {
 type TfLike = "1h" | "4h" | "1d" | "15" | "30" | "60" | "120" | "240" | "D";
 
 type Props = {
-  /** 과거 버전 호환(안 써도 됨) */
+  /** 호환용: 기존 코드에서 넘기는 tvSymbol을 받아만 둡니다(현재 내부에서는 미사용). */
+  tvSymbol?: string;
   symbol?: string;
-  /** 1h/4h/1d 외에도 "30","60","240","D" 등 들어와도 내부에서 표준화 처리 */
   interval?: TfLike;
   height?: number;
-  /** 표시할 MA 길이들 */
   maInputs?: number[];
 };
 
@@ -99,7 +98,8 @@ function normalizeTf(tf?: TfLike): "1h" | "4h" | "1d" {
 }
 
 export function TvChart({
-  symbol, // (호환 목적) 사용 안 해도 유지
+  tvSymbol, // 호환용(미사용)
+  symbol,
   interval = "1d",
   height = 420,
   maInputs = [50, 200, 400],
